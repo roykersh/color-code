@@ -39,7 +39,59 @@ test('/color red paints the tab through osc.exe on Windows', async ($, on) => {
   expect(osc).toBeDefined()
   expect(osc).toContain('11;#340c0c')
   expect(osc).toContain('4;1;#ff0000')
-  expect(osc).toContain('9;4;0')
+  // Claude Code's own progress ring is left alone by default.
+  expect(osc?.some(b => b.startsWith('9;4'))).toBe(false)
+})
+
+test('the ring is drawn only when the activity option is on', { options: { activity: true } }, async ($, on) => {
+  const runs: string[][] = []
+  engine(on, runs)
+  mock.env(on, { OS: 'Windows_NT', WT_SESSION: 'x', USERPROFILE: 'C:/Users/me' })
+  await $.command.run(color('red'))
+  expect(runs.at(-1)).toContain('9;4;0')
+})
+
+test('/color dynamic, light and unknown words are answered without the built-in', async ($, on) => {
+  const runs: string[][] = []
+  const builtin: string[] = []
+  mock.clock(on)
+  mock.store(on)
+  mock.env(on, { OS: 'Windows_NT', USERPROFILE: 'C:/Users/me' })
+  on('fs.read', () => ({ value: JSON.stringify(THEME) }))
+  on('fs.write', () => ({ value: undefined }))
+  on('fs.exists', () => ({ value: false }))
+  on('env.set', () => ({ value: {} }))
+  on('session.id', () => ({ value: 's1' }))
+  on('process.run', ($, e) => {
+    runs.push([...e.argv])
+    return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  on('command.run', ($, e) => {
+    builtin.push(e.args)
+    return { text: '' }
+  })
+  const dyn = await $.command.run(color('dynamic'))
+  expect(dyn.text).toContain('yellow = working')
+  expect(runs.at(-1)?.[0]).toContain('osc.exe')
+  const light = await $.command.run(color('light'))
+  expect(light.text).toContain('light')
+  const odd = await $.command.run(color('mauve'))
+  expect(odd.text).toContain('dynamic')
+  expect(builtin).toEqual([])
+})
+
+test("/color's hint lists Color Code's words", async ($, on) => {
+  on('command.describe', ($, e) => ({ description: e.description, argumentHint: e.argumentHint, isHidden: false }))
+  const described = await $.command.describe({
+    command: 'color',
+    description: 'Set the prompt bar color',
+    argumentHint: '[name]',
+    isHidden: false,
+    immediate: false,
+    provider: { plugin: 'engine', tier: 'core' },
+  })
+  expect(described.argumentHint).toContain('dynamic')
+  expect(described.argumentHint).toContain('purple')
 })
 
 test('on iTerm2 the batch goes to the tty, with the tab color', async ($, on) => {

@@ -1,7 +1,7 @@
 {
   "name": "color-code",
-  "version": "0.2.0",
-  "description": "/color themes the whole Claude Code session: a matching contrast-checked theme (dark or light), the terminal tab's background and palette, and a tab ring showing working / waiting on you / idle. Windows Terminal, macOS and Linux terminals.",
+  "version": "0.3.0",
+  "description": "/color colors the whole terminal tab per Claude Code session (background, palette, Windows Terminal tab and title bar), or with /color dynamic follows Claude's state: yellow working, blue needs you, green done, red failed. Windows Terminal, macOS and Linux.",
   "author": {
     "name": "Roy Kershberg"
   },
@@ -10,9 +10,9 @@
   "userConfig": {
     "activity": {
       "type": "boolean",
-      "title": "Tab activity ring",
-      "description": "Show in the terminal tab whether Claude is working (spinning ring), waiting on you (yellow ring) or idle. Windows Terminal, ConEmu and Ghostty.",
-      "default": true
+      "title": "Color Code's own tab ring",
+      "description": "Draw Color Code's tab progress ring (working / waiting on you / idle) instead of leaving Claude Code's own. Windows Terminal, ConEmu and Ghostty. Off by default: the two rings would fight.",
+      "default": false
     },
     "autoColor": {
       "type": "boolean",

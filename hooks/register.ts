@@ -2,41 +2,58 @@ import type { EngineInterface, Register } from 'claude-code'
 import { platform, send } from './term.ts'
 import { type WtMemory, wtFiles, wtMissing, wtSetup, wtUndo } from './wt.ts'
 
-// /color <name> themes the whole session: Claude Code switches to the matching
-// theme in themes/ (this process only, through the settings it reads), and the
-// terminal tab gets that theme's background, text, cursor and palette over
-// OSC, which follows the tab alone, so every tab keeps its own color. The tab
-// also shows whether Claude is working, waiting on you, or idle.
+// /color <name> colors the session's terminal tab: background, text, cursor
+// and palette over OSC, which follows the tab alone, so every tab keeps its
+// own color (and in Windows Terminal the tab and title bar follow). /color
+// dynamic makes the color follow Claude's state instead.
+//
+// Claude Code 2.1.x reads its own UI theme once, when the session starts, and
+// gives plugins no way to change it live, so Color Code leaves that theme
+// alone; the themes in themes/ can still be picked by hand with /theme.
 //
 // Everything that leans on Claude Code's internals (how /color reports, the
-// transcript, the theme reference) fails soft: the terminal part goes on.
+// transcript) fails soft: the terminal part goes on.
 
 const COLORS = ['red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'purple', 'pink']
 const RESETS = ['default', 'reset', 'none', 'gray', 'grey']
-const HEAL_MS = 15_000
+const WORDS = ['dynamic', 'static', 'light', 'dark', 'auto']
+const HINT = `[${[...COLORS, 'dynamic', 'static', 'light', 'dark', 'auto', 'default'].join('|')}]`
+const DESCRIPTION = "Color this session: a color, dynamic (the color follows Claude's state), or light/dark/auto"
+// A tab moved to another window, or a Windows Terminal settings reload, loses
+// its colors; this is how soon they come back at the latest.
+const HEAL_MS = 3000
+
+// /color dynamic: the color says what Claude is doing.
+const STATES = { working: 'yellow', needsYou: 'blue', done: 'green', failed: 'red' } as const
+type State = keyof typeof STATES
+const LEGEND = "Color Code dynamic: yellow = working · blue = needs you · green = done · red = failed or interrupted. /color <name> or /color static ends it."
 
 type Variant = 'dark' | 'light'
 type Mode = Variant | 'auto'
-type Activity = 'idle' | 'busy' | 'attention'
 type TerminalPalette = { background: string; foreground: string; cursor: string; tab?: string; ansi: string[] }
+type Remembered = { dynamic?: boolean; at?: number }
 
 // Module state; a reload starts it over and session.start finds it again.
-let color: string | undefined
+let color: string | undefined // the session's own /color
+let dynamic = false
+let ended: State = 'done' // how the last turn ended
 let mode: Mode = 'auto'
-let ownTheme: string | undefined // the person's theme setting, before ours
-let showActivity = true
+let ownTheme: string | undefined // the person's Claude theme
+let showActivity = false
 let turning = false
-const waiting: string[] = [] // tools whose prompt is up
+const waiting: string[] = [] // what is waiting on the person
 let lastBatch = ''
 let lastSentAt = 0
+let lastWidth = 0
 let heal: { cancel: () => void } | undefined
 let transcriptPath: string | undefined
 const palettes = new Map<string, TerminalPalette>()
 
 const variant = (): Variant => (mode !== 'auto' ? mode : /light/i.test(ownTheme ?? '') ? 'light' : 'dark')
+const state = (): State => (waiting.length > 0 ? 'needsYou' : turning ? 'working' : ended)
+// The color on the tab now.
+const shown = (): string | undefined => (dynamic ? STATES[state()] : color)
 const themeFile = (name: string | undefined) => (name === undefined ? undefined : variant() === 'light' ? `${name}-light` : name)
-const themeRef = (file: string) => `custom:color-code:${file}`
-const activity = (): Activity => (waiting.length > 0 ? 'attention' : turning ? 'busy' : 'idle')
 
 let logged = ''
 
@@ -82,7 +99,7 @@ function hexBytes(hex: string): number[] {
 async function batch($: EngineInterface, reset: boolean): Promise<string[]> {
   const p = await platform($)
   const bodies: string[] = []
-  const file = themeFile(color)
+  const file = themeFile(shown())
   const t = file ? await palette($, file) : undefined
   if (t) {
     bodies.push(`11;${t.background}`, `10;${t.foreground}`, `12;${t.cursor}`, ...t.ansi.map((c, i) => `4;${i};${c}`))
@@ -94,17 +111,18 @@ async function batch($: EngineInterface, reset: boolean): Promise<string[]> {
     bodies.push('104', '110', '111', '112')
     if (p.iterm) bodies.push('6;1;bg;*;default')
   }
-  if (p.progress && (showActivity || reset)) {
-    const state = showActivity ? activity() : 'idle'
-    // 3: the spinning ring; 4 at 100: a full yellow ring, waiting on you.
-    bodies.push(state === 'busy' ? '9;4;3' : state === 'attention' ? '9;4;4;100' : '9;4;0')
+  // Off by default: Claude Code draws its own progress ring (OSC 9;4) and two
+  // writers of one ring only flicker. 3: spinning; 4 at 100: a full yellow ring.
+  if (p.progress && showActivity) {
+    const s = state()
+    bodies.push(s === 'working' ? '9;4;3' : s === 'needsYou' ? '9;4;4;100' : '9;4;0')
   }
   return bodies
 }
 
-// Sends the batch when it changed, or when healing (a tab moved to another
-// window, or a Windows Terminal settings reload, drops OSC colors; the same
-// colors again repaint nothing visible). Sends never overlap.
+// Sends the batch when it changed, or when healing (a moved tab or a settings
+// reload drops OSC colors; the same colors again repaint nothing visible).
+// Sends never overlap; requests made meanwhile fold into one more.
 let inflight: Promise<void> | undefined
 let again: { heal: boolean; reset: boolean } | undefined
 
@@ -135,8 +153,8 @@ async function paintOnce($: EngineInterface, opts: { heal?: boolean; reset?: boo
   const key = bodies.join('|')
   const now = await $.clock.now()
   // A change always goes out; a heal re-sends the same only for a colored
-  // tab, and twice in two seconds is once.
-  if (key === lastBatch && !(opts.heal && color !== undefined && now - lastSentAt >= 2000)) return
+  // tab, and not twice within a second.
+  if (key === lastBatch && !(opts.heal && shown() !== undefined && now - lastSentAt >= 1000)) return
   lastBatch = key
   lastSentAt = now
   await log($, `send ${bodies.length} (${bodies[0] ?? ''}) -> ${await send($, $.plugin.root, bodies)}`)
@@ -146,50 +164,53 @@ async function claudeHome($: EngineInterface) {
   return (await $.env.get('CLAUDE_CONFIG_DIR')) ?? `${(await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME'))}/.claude`
 }
 
-// The engine merges settings again when a settings file changes; rewriting the
-// user file as it stands makes it ask the settings.read hook below again.
-async function refreshSettings($: EngineInterface) {
-  try {
-    const path = `${await claudeHome($)}/settings.json`
-    const text = await $.fs.read(path).catch(() => undefined)
-    if (text !== undefined) await $.fs.write(path, text)
-    await log($, `refreshed ${path}: ${text !== undefined}`)
-  } catch (err) {
-    await log($, `refresh failed: ${String(err)}`)
-  }
-}
-
 function keepHealing($: EngineInterface) {
-  if (color !== undefined && heal === undefined) {
+  if (shown() !== undefined && heal === undefined) {
     try {
       heal = $.clock.every(HEAL_MS, () => void paint($, { heal: true }))
     } catch {
       heal = undefined
     }
-  } else if (color === undefined && heal !== undefined) {
+  } else if (shown() === undefined && heal !== undefined) {
     heal.cancel()
     heal = undefined
   }
 }
 
-async function apply($: EngineInterface, name: string | undefined, why: string) {
-  const before = themeFile(color)
+// Kept for this session: a module reload reads the env, a resume the store.
+async function remember($: EngineInterface) {
+  const id = await $.session.id()
+  await $.env.set('COLOR_CODE_STATE', `${id} ${color ?? '-'} ${dynamic ? 'dynamic' : 'static'}`).catch(() => undefined)
+  try {
+    const all = ((await $.store.get('sessions')) ?? {}) as Record<string, Remembered>
+    const now = await $.clock.now()
+    if (dynamic) all[id] = { dynamic: true, at: now }
+    else delete all[id]
+    // Keep the newest 200.
+    const kept = Object.entries(all).sort((a, b) => (b[1].at ?? 0) - (a[1].at ?? 0)).slice(0, 200)
+    await $.store.set('sessions', Object.fromEntries(kept))
+  } catch {
+    // remembering is a nicety
+  }
+}
+
+async function apply($: EngineInterface, name: string | undefined, why: string, opts: { dynamic?: boolean } = {}) {
   color = name !== undefined && COLORS.includes(name) ? name : undefined
-  await log($, `apply ${color ?? 'reset'} (${variant()}) from ${why}`)
-  // Survives a reload of this module, for this session only.
-  await $.env.set('COLOR_CODE_STATE', color ? `${await $.session.id()} ${color}` : undefined).catch(() => undefined)
+  if (opts.dynamic !== undefined) dynamic = opts.dynamic
+  await log($, `apply ${dynamic ? `dynamic (${state()})` : (color ?? 'reset')} (${variant()}) from ${why}`)
+  await remember($)
   keepHealing($)
-  await paint($, { reset: color === undefined })
-  if (themeFile(color) !== before) await refreshSettings($)
+  await paint($, { reset: shown() === undefined })
 }
 
 // After a Windows Terminal settings reload clears every tab, paint this one.
 function repaintSoon($: EngineInterface) {
-  for (const ms of [1500, 4000]) later($, () => paint($, { heal: true }), ms)
+  for (const ms of [1000, 3000]) later($, () => paint($, { heal: true }), ms)
 }
 
-function setActivity($: EngineInterface) {
-  if (showActivity) later($, () => paint($))
+// Claude's state moved: repaint when it shows (dynamic color or the ring).
+function stateChanged($: EngineInterface) {
+  if (dynamic || showActivity) later($, () => paint($))
 }
 
 // ---- where the color comes from -------------------------------------------
@@ -277,19 +298,39 @@ async function offerTabs($: EngineInterface) {
   }
 }
 
-// ---- /color-code ------------------------------------------------------------
+// ---- the words /color and /color-code share ---------------------------------
+
+async function setMode($: EngineInterface, word: Mode): Promise<string> {
+  mode = word
+  await $.store.set('mode', word).catch(() => undefined)
+  await paint($)
+  const warn =
+    variant() === 'light' && !/light/i.test(ownTheme ?? '')
+      ? ' Your Claude theme is dark, so its text will be light on a pale tab: pick a light theme with /theme to match.'
+      : ''
+  return `Color Code: ${word === 'auto' ? `following your Claude theme (${variant()} now)` : `${word} variants`}, here and in new sessions.${warn}`
+}
+
+async function setDynamic($: EngineInterface, on: boolean): Promise<string> {
+  await apply($, color, on ? '/color dynamic' : '/color static', { dynamic: on })
+  if (on) return LEGEND
+  return color ? `Color Code: back to ${color}.` : 'Color Code: dynamic colors off.'
+}
+
+function usage(): string {
+  return [
+    `/color ${HINT}`,
+    `  ${COLORS.join(', ')}: color this session's tab.`,
+    "  dynamic: the color follows Claude's state (yellow working, blue needs you, green done, red failed); static ends it.",
+    '  light, dark, auto: the pale or the dark variant of each color, or follow your Claude theme.',
+    '  default: back to the terminal\'s own colors.',
+  ].join('\n')
+}
 
 async function colorCode($: EngineInterface, args: string): Promise<string> {
   const [word = ''] = args.trim().toLowerCase().split(/\s+/)
-  if (word === 'light' || word === 'dark' || word === 'auto') {
-    mode = word
-    await $.store.set('mode', word)
-    if (color !== undefined) {
-      await paint($)
-      await refreshSettings($)
-    }
-    return `Color Code: ${word === 'auto' ? `following your Claude theme (${variant()} now)` : `${word} variants`}, here and in new sessions.`
-  }
+  if (word === 'light' || word === 'dark' || word === 'auto') return setMode($, word)
+  if (word === 'dynamic' || word === 'static') return setDynamic($, word === 'dynamic')
   if (word === 'setup' || word === 'undo-setup') {
     const p = await platform($)
     if (!p.windows) return 'Nothing to set up here: macOS and Linux terminals take the colors as they are.'
@@ -311,13 +352,16 @@ async function colorCode($: EngineInterface, args: string): Promise<string> {
   if (p.windows) {
     const files = await wtFiles($)
     const missing = files.length ? await wtMissing($, files) : []
-    tabs = files.length === 0 ? 'Windows Terminal: not found.' : missing.length ? 'Windows Terminal: tabs keep their own color (run /color-code setup).' : 'Windows Terminal: tabs follow the session color.'
+    tabs = files.length === 0 ? 'Windows Terminal: not found.' : missing.length ? 'Windows Terminal: tabs keep their own color (run /color-code setup).' : 'Windows Terminal: tabs and title bar follow the session color.'
   }
+  const now = dynamic ? `dynamic, ${STATES[state()]} now (${state()})` : (color ?? 'no color')
   return [
-    `Color Code: ${color ? `${color} (${variant()})` : 'no color'} on ${where}; mode ${mode}.`,
-    `Tab activity ring: ${showActivity ? (p.progress ? 'on' : 'on, but this terminal has no ring') : 'off'}.`,
+    `Color Code: ${now}, ${variant()} variant (mode ${mode}), on ${where}.`,
     tabs,
-    'Usage: /color <name> colors the session; /color-code light|dark|auto picks the variant; /color-code setup|undo-setup changes Windows Terminal.',
+    `Tab progress ring: ${showActivity ? (p.progress ? "Color Code's (option activity on)" : 'on, but this terminal has none') : "Claude Code's own (Color Code's is off)"}.`,
+    "Claude Code's own UI theme: chosen with /theme (the Session themes are there); Claude Code reads it only at start.",
+    usage(),
+    '/color-code setup | undo-setup: Windows Terminal tab theme.',
   ]
     .filter(Boolean)
     .join('\n')
@@ -326,12 +370,12 @@ async function colorCode($: EngineInterface, args: string): Promise<string> {
 // ---- hooks ------------------------------------------------------------------
 
 export const register: Register = (on, options) => {
-  showActivity = options.activity !== false
+  showActivity = options.activity === true
   const autoColor = options.autoColor === true
 
   on('session.start', async ($, e, next) => {
     await $.command
-      .register({ name: 'color-code', description: 'Color Code status, light/dark/auto, Windows Terminal setup', argumentHint: '[light|dark|auto|setup|undo-setup]' })
+      .register({ name: 'color-code', description: 'Color Code: status, light/dark/auto, dynamic, Windows Terminal setup', argumentHint: '[light|dark|auto|dynamic|static|setup|undo-setup]' })
       .catch(() => undefined)
     const started = await next(e)
     try {
@@ -339,14 +383,21 @@ export const register: Register = (on, options) => {
       if (!e.isInteractive) return started
       const stored = await $.store.get('mode').catch(() => undefined)
       if (stored === 'light' || stored === 'dark' || stored === 'auto') mode = stored
-      ownTheme ??= String((await $.settings.read({ key: 'theme' }).catch(() => undefined)) ?? '')
-      // A reload of this module (same session), then the transcript, then auto.
-      const [id, kept = ''] = ((await $.env.get('COLOR_CODE_STATE')) ?? '').split(' ')
+      const theme = await $.settings.read({ key: 'theme' }).catch(() => undefined)
+      if (typeof theme === 'string') ownTheme = theme
+      const id = await $.session.id()
+      // A reload of this module (same session), then the store and the
+      // transcript (a resume), then auto.
+      const [keptId, kept = '-', how = ''] = ((await $.env.get('COLOR_CODE_STATE')) ?? '').split(' ')
+      const reloaded = keptId === id
+      const sessions = ((await $.store.get('sessions').catch(() => undefined)) ?? {}) as Record<string, Remembered>
+      const wasDynamic = reloaded ? how === 'dynamic' : sessions[id]?.dynamic === true
       const pick =
-        (id === (await $.session.id()) && COLORS.includes(kept) ? kept : undefined) ??
+        (reloaded && COLORS.includes(kept) ? kept : undefined) ??
         (await savedColor($, e.cwd)) ??
-        (autoColor ? projectColor(await $.session.root().catch(() => e.cwd)) : undefined)
-      if (pick !== undefined) await apply($, pick, 'session start')
+        (autoColor && !wasDynamic ? projectColor(await $.session.root().catch(() => e.cwd)) : undefined)
+      if (pick !== undefined || wasDynamic) await apply($, pick, 'session start', { dynamic: wasDynamic })
+      if (wasDynamic && !reloaded) $.ui.log(LEGEND)
       later($, () => offerTabs($), 2500)
     } catch (err) {
       await log($, `session.start: ${String(err)}`)
@@ -360,22 +411,53 @@ export const register: Register = (on, options) => {
     return next(e)
   }).catch(($, e, next) => next(e))
 
+  // /color's typeahead line and hint list what Color Code adds.
+  on('command.describe', { command: 'color' }, async ($, e, next) => {
+    const described = await next(e)
+    return { ...described, description: DESCRIPTION, argumentHint: HINT }
+  }).catch(($, e, next) => next(e))
+
+  // And the words themselves, once a letter is typed after /color.
+  on('prompt.autocomplete', async ($, e, next) => {
+    const offered = await next(e)
+    if (!/^\/color\s+\S*$/i.test(e.text.slice(0, e.cursor)) || e.token.startsWith('/')) return offered
+    const typed = e.token.toLowerCase()
+    const words = [...COLORS, 'dynamic', 'static', 'light', 'dark', 'auto', 'default'].filter(w => w.startsWith(typed) && w !== typed)
+    const about: Record<string, string> = {
+      dynamic: "color follows Claude's state",
+      static: 'end dynamic colors',
+      light: 'pale variants',
+      dark: 'dark variants',
+      auto: 'follow your Claude theme',
+      default: "the terminal's own colors",
+    }
+    return { suggestions: [...offered.suggestions, ...words.map(w => ({ text: w, description: about[w] ?? 'Color Code' }))] }
+  }).catch(($, e, next) => next(e))
+
   on('command.run', { command: 'color' }, async ($, e, next) => {
+    const arg = e.args.trim().toLowerCase()
+    // Color Code's own words, and anything /color would refuse, are answered
+    // here without the built-in, which knows none of them.
+    if (arg === 'light' || arg === 'dark' || arg === 'auto') return { text: await setMode($, arg) }
+    if (arg === 'dynamic' || arg === 'static') return { text: await setDynamic($, arg === 'dynamic') }
+    if (arg !== '' && !COLORS.includes(arg) && !RESETS.includes(arg) && !WORDS.includes(arg)) {
+      return { text: `Color Code doesn't know "${arg}".\n${usage()}` }
+    }
     const ran = await next(e)
     try {
       const said = ran.text ?? ''
       await log($, `command.run color args=${JSON.stringify(e.args)} text=${JSON.stringify(said)}`)
       // The argument first; the printed line second (the picker form prints
       // nothing); a bare /color picks at random and only the transcript knows.
-      const arg = e.args.trim().toLowerCase()
+      // Any of these ends dynamic colors.
       const told = /color set to:?\s*(\w+)/i.exec(said)?.[1]?.toLowerCase()
-      if (COLORS.includes(arg)) await apply($, arg, '/color')
-      else if (RESETS.includes(arg) || /reset to default/i.test(said)) await apply($, undefined, '/color')
-      else if (told !== undefined && COLORS.includes(told)) await apply($, told, '/color text')
+      if (COLORS.includes(arg)) await apply($, arg, '/color', { dynamic: false })
+      else if (RESETS.includes(arg) || /reset to default/i.test(said)) await apply($, undefined, '/color', { dynamic: false })
+      else if (told !== undefined && COLORS.includes(told)) await apply($, told, '/color text', { dynamic: false })
       else {
         const saved = await savedColor($, await $.session.cwd())
         await log($, `/color ${arg}: transcript says ${saved}`)
-        if (saved !== undefined && saved !== color) await apply($, saved, '/color transcript')
+        if (saved !== undefined) await apply($, saved, '/color transcript', { dynamic: false })
       }
     } catch (err) {
       await log($, `/color: ${String(err)}`)
@@ -387,29 +469,28 @@ export const register: Register = (on, options) => {
     ($, e) => ({ text: 'Color Code could not do that; set COLOR_CODE_DEBUG=1 for a log.' }),
   )
 
-  // Our theme for this process only; the person's own is noted for auto.
-  on('settings.read', async ($, e, next) => {
-    const read = await next(e)
-    if (e.source !== undefined || !('value' in read)) return read
-    const own = (read.value as { theme?: unknown }).theme
-    if (typeof own === 'string' && !own.startsWith('custom:color-code:')) ownTheme = own
-    const file = themeFile(color)
-    if (file === undefined) return read
-    return { value: { ...read.value, theme: themeRef(file) } }
-  }).catch(($, e, next) => next(e))
-
-  // A theme picked in /config while colored: follow it in auto mode.
+  // A theme picked in /config or /theme: the variant follows it in auto mode.
   on('config.set', { key: 'theme' }, async ($, e, next) => {
     const set = await next(e)
-    if (typeof e.value === 'string' && !e.value.startsWith('custom:color-code:')) {
+    if ('value' in set && typeof set.value === 'string') {
       const before = variant()
-      ownTheme = e.value
-      if (color !== undefined && variant() !== before) later($, async () => (await paint($), await refreshSettings($)))
+      ownTheme = set.value
+      if (variant() !== before) later($, () => paint($))
     }
     return set
   }).catch(($, e, next) => next(e))
 
-  // ---- the tab's activity ring, and healing on every turn ----
+  // A tab dragged to another window usually changes its width: repaint at once.
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    const width = e.viewport?.columns ?? 0
+    if (width !== lastWidth) {
+      if (lastWidth !== 0) later($, () => paint($, { heal: true }))
+      lastWidth = width
+    }
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  // ---- Claude's state: dynamic colors, the optional ring, healing ----
 
   on('prompt.submit', async ($, e, next) => {
     later($, () => paint($, { heal: true }))
@@ -426,34 +507,38 @@ export const register: Register = (on, options) => {
   })
 
   on('turn.complete', async ($, e, next) => {
+    const done = await next(e)
     if (e.agentId === undefined) {
       turning = false
       waiting.length = 0
+      // Ended on a question to you: that is waiting on you too.
+      const asked = /\?\s*$/.test((done.text ?? '').replace(/[*_`)\]]+\s*$/, ''))
+      ended = e.reason === 'answer' ? (asked ? 'needsYou' : 'done') : 'failed'
       later($, () => paint($, { heal: true }))
     }
-    return next(e)
+    return done
   })
 
-  // A permission prompt is up: the ring turns to "waiting on you".
+  // A permission prompt is up.
   on('classic.PermissionRequest', async ($, e, next) => {
     const decided = await next(e)
     if (!('decision' in decided) || decided.decision === undefined) {
       waiting.push(String(e.tool_name))
-      setActivity($)
+      stateChanged($)
     }
     return decided
   }).catch(($, e, next) => next(e))
 
   on('classic.Elicitation', async ($, e, next) => {
     waiting.push('elicitation')
-    setActivity($)
+    stateChanged($)
     return next(e)
   }).catch(($, e, next) => next(e))
 
   on('classic.ElicitationResult', async ($, e, next) => {
     const at = waiting.indexOf('elicitation')
     if (at >= 0) waiting.splice(at, 1)
-    setActivity($)
+    stateChanged($)
     return next(e)
   }).catch(($, e, next) => next(e))
 
@@ -462,7 +547,7 @@ export const register: Register = (on, options) => {
     const tool = String(e.tool)
     if (tool === 'AskUserQuestion') {
       waiting.push(tool)
-      setActivity($)
+      stateChanged($)
     }
     try {
       return await next(e)
@@ -470,7 +555,7 @@ export const register: Register = (on, options) => {
       const at = waiting.indexOf(tool)
       if (at >= 0) {
         waiting.splice(at, 1)
-        setActivity($)
+        stateChanged($)
       }
     }
   }).catch(($, e, next) => next(e))
@@ -483,6 +568,7 @@ export const register: Register = (on, options) => {
       waiting.length = 0
       if (e.reason !== 'clear' && e.reason !== 'resume') {
         color = undefined
+        dynamic = false
         await paint($, { reset: true })
       }
     } catch {
