@@ -1,5 +1,6 @@
 {
   "name": "color-code",
+  "description": "Color Code: per-session /color themes for Claude Code and the terminal tab",
   "owner": {
     "name": "Roy Kershberg"
   },
@@ -7,7 +8,7 @@
     {
       "name": "color-code",
       "source": "./",
-      "description": "Per-session themes for /color in Claude Code + Windows Terminal"
+      "description": "Per-session themes for /color in Claude Code and the terminal tab"
     }
   ]
 }

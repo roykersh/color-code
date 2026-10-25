@@ -1,10 +1,24 @@
 {
   "name": "color-code",
-  "version": "0.1.0",
-  "description": "/color themes the whole Claude Code session: a matching contrast-checked theme plus the Windows Terminal tab's background, palette and tab bar, per tab.",
+  "version": "0.2.0",
+  "description": "/color themes the whole Claude Code session: a matching contrast-checked theme (dark or light), the terminal tab's background and palette, and a tab ring showing working / waiting on you / idle. Windows Terminal, macOS and Linux terminals.",
   "author": {
     "name": "Roy Kershberg"
   },
   "license": "MIT",
-  "repository": "https://github.com/roykersh/color-code"
+  "repository": "https://github.com/roykersh/color-code",
+  "userConfig": {
+    "activity": {
+      "type": "boolean",
+      "title": "Tab activity ring",
+      "description": "Show in the terminal tab whether Claude is working (spinning ring), waiting on you (yellow ring) or idle. Windows Terminal, ConEmu and Ghostty.",
+      "default": true
+    },
+    "autoColor": {
+      "type": "boolean",
+      "title": "Auto color per project",
+      "description": "Give a session nobody colored a stable color picked from its project folder.",
+      "default": false
+    }
+  }
 }
