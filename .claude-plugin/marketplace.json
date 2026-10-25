@@ -1,0 +1,13 @@
+{
+  "name": "color-code",
+  "owner": {
+    "name": "Roy Kershberg"
+  },
+  "plugins": [
+    {
+      "name": "color-code",
+      "source": "./",
+      "description": "Per-session themes for /color in Claude Code + Windows Terminal"
+    }
+  ]
+}

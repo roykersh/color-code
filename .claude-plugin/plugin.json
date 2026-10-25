@@ -1,0 +1,10 @@
+{
+  "name": "color-code",
+  "version": "0.1.0",
+  "description": "/color themes the whole Claude Code session: a matching contrast-checked theme plus the Windows Terminal tab's background, palette and tab bar, per tab.",
+  "author": {
+    "name": "Roy Kershberg"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/roykersh/color-code"
+}
