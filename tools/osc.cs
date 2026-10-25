@@ -28,7 +28,10 @@ static class Osc {
         string text = sb.ToString();
 
         // Without --pid, climb the parents to the nearest one whose console
-        // has VT output on: Claude Code's, in its Windows Terminal tab.
+        // has VT output on: Claude Code's, in its Windows Terminal tab. The
+        // climb ends at the first claude.exe: a headless Claude (claude -p, an
+        // SDK session) started under another session must never reach that
+        // session's tab.
         uint self = (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
         uint[] chain = pid == ATTACH_PARENT_PROCESS ? Ancestors(self) : new[] { pid };
         FreeConsole();
@@ -65,15 +68,20 @@ static class Osc {
 
     static uint[] Ancestors(uint pid) {
         var parents = new System.Collections.Generic.Dictionary<uint, uint>();
+        var names = new System.Collections.Generic.Dictionary<uint, string>();
         IntPtr snap = CreateToolhelp32Snapshot(2, 0);
         var entry = new ProcessEntry { dwSize = (uint)Marshal.SizeOf(typeof(ProcessEntry)) };
         if (Process32FirstW(snap, ref entry)) {
-            do parents[entry.th32ProcessID] = entry.th32ParentProcessID; while (Process32NextW(snap, ref entry));
+            do { parents[entry.th32ProcessID] = entry.th32ParentProcessID; names[entry.th32ProcessID] = entry.szExeFile; } while (Process32NextW(snap, ref entry));
         }
         CloseHandle(snap);
         var chain = new System.Collections.Generic.List<uint>();
         uint at = pid;
-        while (chain.Count < 8 && parents.TryGetValue(at, out at) && at != 0) chain.Add(at);
+        while (chain.Count < 8 && parents.TryGetValue(at, out at) && at != 0) {
+            chain.Add(at);
+            string name;
+            if (names.TryGetValue(at, out name) && string.Equals(name, "claude.exe", StringComparison.OrdinalIgnoreCase)) break;
+        }
         return chain.ToArray();
     }
 }

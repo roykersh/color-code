@@ -1,6 +1,6 @@
 import type { EngineInterface, Register } from 'claude-code'
 import { platform, send } from './term.ts'
-import { type WtMemory, wtFiles, wtMissing, wtSetup, wtUndo } from './wt.ts'
+import { type WtMemory, wtFiles, wtMissing, wtSetup, wtStamp, wtUndo } from './wt.ts'
 
 // /color <name> colors the session's terminal tab: background, text, cursor
 // and palette over OSC, which follows the tab alone, so every tab keeps its
@@ -22,6 +22,9 @@ const DESCRIPTION = "Color this session: a color, dynamic (the color follows Cla
 // A tab moved to another window, or a Windows Terminal settings reload, loses
 // its colors; this is how soon they come back at the latest.
 const HEAL_MS = 3000
+// Windows Terminal drops every tab's OSC colors whenever its settings.json is
+// written (by anyone): it is watched this often, so the repaint follows at once.
+const WATCH_MS = 500
 
 // /color dynamic: the color says what Claude is doing.
 const STATES = { working: 'yellow', needsYou: 'blue', done: 'green', failed: 'red' } as const
@@ -45,7 +48,13 @@ const waiting: string[] = [] // what is waiting on the person
 let lastBatch = ''
 let lastSentAt = 0
 let lastWidth = 0
+// The tab holds this module's colors: only then does an exit reset it. A
+// headless run (claude -p, an SDK session) never painted, and must not reset
+// the tab of the session that started it.
+let painted = false
 let heal: { cancel: () => void } | undefined
+let watch: { cancel: () => void } | undefined
+let seenStamp: string | undefined
 let transcriptPath: string | undefined
 const palettes = new Map<string, TerminalPalette>()
 
@@ -157,6 +166,7 @@ async function paintOnce($: EngineInterface, opts: { heal?: boolean; reset?: boo
   if (key === lastBatch && !(opts.heal && shown() !== undefined && now - lastSentAt >= 1000)) return
   lastBatch = key
   lastSentAt = now
+  painted = bodies.some(b => b.startsWith('11;'))
   await log($, `send ${bodies.length} (${bodies[0] ?? ''}) -> ${await send($, $.plugin.root, bodies)}`)
 }
 
@@ -171,9 +181,37 @@ function keepHealing($: EngineInterface) {
     } catch {
       heal = undefined
     }
+    void watchSettings($)
   } else if (shown() === undefined && heal !== undefined) {
-    heal.cancel()
-    heal = undefined
+    stopHealing()
+  }
+}
+
+function stopHealing() {
+  heal?.cancel()
+  heal = undefined
+  watch?.cancel()
+  watch = undefined
+}
+
+// A write to Windows Terminal's settings.json reloads them and clears this
+// tab: repaint right after the reload instead of up to HEAL_MS later.
+async function watchSettings($: EngineInterface) {
+  if (watch !== undefined || !(await $.env.get('WT_SESSION'))) return
+  const files = await wtFiles($).catch(() => [])
+  if (files.length === 0 || watch !== undefined) return
+  seenStamp = await wtStamp($, files)
+  if (shown() === undefined) return // stopped meanwhile
+  try {
+    watch = $.clock.every(WATCH_MS, async () => {
+      const stamp = await wtStamp($, files)
+      if (stamp === seenStamp) return
+      seenStamp = stamp
+      await log($, 'Windows Terminal settings changed: repainting')
+      for (const ms of [250, 1000]) later($, () => paint($, { heal: true }), ms)
+    })
+  } catch {
+    watch = undefined
   }
 }
 
@@ -562,14 +600,14 @@ export const register: Register = (on, options) => {
 
   on('session.end', async ($, e, next) => {
     try {
-      heal?.cancel()
-      heal = undefined
       turning = false
       waiting.length = 0
+      // A /clear or a resume goes on in this tab: the color and its healing stay.
       if (e.reason !== 'clear' && e.reason !== 'resume') {
+        stopHealing()
         color = undefined
         dynamic = false
-        await paint($, { reset: true })
+        if (painted) await paint($, { reset: true })
       }
     } catch {
       // exit stays fast whatever happened

@@ -8,6 +8,8 @@ the title bar. Every tab keeps its own color, so with several Claude sessions
 open as tabs you can tell them apart at a glance. Or run `/color dynamic` and
 the color tells you what each session is doing.
 
+![/color blue, green and purple, then the light cyan, yellow and pink, recoloring a whole Windows Terminal tab](assets/themes.gif)
+
 ## Install
 
 At the prompt of a terminal session:
@@ -34,6 +36,8 @@ tabs tells you which session needs you:
 | 🟦 **blue** | needs you | a permission prompt or a question (AskUserQuestion, an MCP form) is waiting on you, or the turn ended by asking you something |
 | 🟩 **green** | done | the turn finished; your move whenever you like |
 | 🟥 **red** | failed | the turn ended in an error, a refusal, or you interrupted it |
+
+![/color dynamic: yellow while Claude works, blue at a permission prompt, green when done, red after Esc](assets/dynamic.gif)
 
 The legend is printed in the session when you turn it on, and again when a
 dynamic session is resumed. `/color <name>` or `/color static` goes back to a

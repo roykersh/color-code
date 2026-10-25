@@ -126,3 +126,21 @@ test('Windows Terminal setup adds the theme, keeps the rest, and undoes', () => 
   expect(undone.theme).toBe('dark')
   expect(follows(undone)).toBe(false)
 })
+
+const ended = (reason: 'clear' | 'prompt_input_exit' | 'other') => ({ reason, sessionId: 's1', resume: { id: 's1' } })
+
+test('an exit resets only a tab this session painted', async ($, on) => {
+  const runs: string[][] = []
+  engine(on, runs)
+  on('session.end', ($, e) => ({ sessionId: e.sessionId }))
+  mock.env(on, { OS: 'Windows_NT', USERPROFILE: 'C:/Users/me' })
+  // A headless run (claude -p, an SDK session) never painted: its end sends nothing.
+  await $.session.end(ended('other'))
+  expect(runs.some(argv => argv[0]?.endsWith('/bin/osc.exe'))).toBe(false)
+  await $.command.run(color('red'))
+  // A /clear goes on in the same tab: the color stays.
+  await $.session.end(ended('clear'))
+  expect(runs.at(-1)).toContain('11;#340c0c')
+  await $.session.end(ended('prompt_input_exit'))
+  expect(runs.at(-1)).toContain('111')
+})

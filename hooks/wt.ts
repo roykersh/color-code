@@ -29,6 +29,13 @@ export async function wtFiles($: EngineInterface): Promise<string[]> {
   return found
 }
 
+// The files' modification times, as one string: it changes when any is written.
+export async function wtStamp($: EngineInterface, files: readonly string[]): Promise<string> {
+  const times: string[] = []
+  for (const file of files) times.push(String(await $.fs.stat(file).then(s => s.mtimeMs).catch(() => 0)))
+  return times.join(' ')
+}
+
 // settings.json is JSON with comments; comments don't survive a rewrite (the
 // backup keeps them).
 export function parseJsonc(text: string): WtJson {
