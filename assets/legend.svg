@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="588" viewBox="0 0 400 588">
+<title>/color dynamic: yellow working, blue needs you, green done, red failed</title>
+<rect width="400" height="588" rx="14" fill="#151515"/>
+<text x="28" y="44" font-family="Consolas, 'SFMono-Regular', Menlo, monospace" font-size="20" fill="#d8d8d8">/color dynamic</text>
+<text x="372" y="44" font-family="'Segoe UI', -apple-system, Helvetica, Arial, sans-serif" font-size="15" fill="#8a8a8a" text-anchor="end">the tab color is the status</text>
+<line x1="28" y1="76" x2="372" y2="76" stroke="#2c2c2c" stroke-width="2"/>
+<rect x="28" y="98" width="64" height="84" rx="10" fill="#f4c325"/>
+<text x="112" y="122" font-family="'Segoe UI', -apple-system, Helvetica, Arial, sans-serif" font-size="26" font-weight="700" fill="#f4c325">yellow</text>
+<text x="372" y="122" font-family="'Segoe UI', -apple-system, Helvetica, Arial, sans-serif" font-size="20" font-weight="700" fill="#f2f2f2" text-anchor="end">working</text>
+<text x="112" y="152" font-family="'Segoe UI', -apple-system, Helvetica, Arial, sans-serif" font-size="16" fill="#9a9a9a">Claude is on your prompt,</text>
+<text x="112" y="174" font-family="'Segoe UI', -apple-system, Helvetica, Arial, sans-serif" font-size="16" fill="#9a9a9a">from send until the turn ends</text>
+<line x1="28" y1="204" x2="372" y2="204" stroke="#2c2c2c" stroke-width="2"/>
+<rect x="28" y="226" width="64" height="84" rx="10" fill="#5592e7"/>
+<text x="112" y="250" font-family="'Segoe UI', -apple-system, Helvetica, Arial, sans-serif" font-size="26" font-weight="700" fill="#5592e7">blue</text>
+<text x="372" y="250" font-family="'Segoe UI', -apple-system, Helvetica, Arial, sans-serif" font-size="20" font-weight="700" fill="#f2f2f2" text-anchor="end">needs you</text>
+<text x="112" y="280" font-family="'Segoe UI', -apple-system, Helvetica, Arial, sans-serif" font-size="16" fill="#9a9a9a">a permission prompt or a</text>
+<text x="112" y="302" font-family="'Segoe UI', -apple-system, Helvetica, Arial, sans-serif" font-size="16" fill="#9a9a9a">question is waiting on you</text>
+<line x1="28" y1="332" x2="372" y2="332" stroke="#2c2c2c" stroke-width="2"/>
+<rect x="28" y="354" width="64" height="84" rx="10" fill="#39d06b"/>
+<text x="112" y="378" font-family="'Segoe UI', -apple-system, Helvetica, Arial, sans-serif" font-size="26" font-weight="700" fill="#39d06b">green</text>
+<text x="372" y="378" font-family="'Segoe UI', -apple-system, Helvetica, Arial, sans-serif" font-size="20" font-weight="700" fill="#f2f2f2" text-anchor="end">done</text>
+<text x="112" y="408" font-family="'Segoe UI', -apple-system, Helvetica, Arial, sans-serif" font-size="16" fill="#9a9a9a">the turn finished:</text>
+<text x="112" y="430" font-family="'Segoe UI', -apple-system, Helvetica, Arial, sans-serif" font-size="16" fill="#9a9a9a">your move, whenever you like</text>
+<line x1="28" y1="460" x2="372" y2="460" stroke="#2c2c2c" stroke-width="2"/>
+<rect x="28" y="482" width="64" height="84" rx="10" fill="#e94949"/>
+<text x="112" y="506" font-family="'Segoe UI', -apple-system, Helvetica, Arial, sans-serif" font-size="26" font-weight="700" fill="#e94949">red</text>
+<text x="372" y="506" font-family="'Segoe UI', -apple-system, Helvetica, Arial, sans-serif" font-size="20" font-weight="700" fill="#f2f2f2" text-anchor="end">failed</text>
+<text x="112" y="536" font-family="'Segoe UI', -apple-system, Helvetica, Arial, sans-serif" font-size="16" fill="#9a9a9a">an error, a refusal,</text>
+<text x="112" y="558" font-family="'Segoe UI', -apple-system, Helvetica, Arial, sans-serif" font-size="16" fill="#9a9a9a">or you interrupted it (Esc)</text>
+<line x1="28" y1="588" x2="372" y2="588" stroke="#2c2c2c" stroke-width="2"/>
+</svg>

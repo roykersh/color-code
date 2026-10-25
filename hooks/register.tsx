@@ -29,7 +29,19 @@ const WATCH_MS = 500
 // /color dynamic: the color says what Claude is doing.
 const STATES = { working: 'yellow', needsYou: 'blue', done: 'green', failed: 'red' } as const
 type State = keyof typeof STATES
-const LEGEND = "Color Code dynamic: yellow = working · blue = needs you · green = done · red = failed or interrupted. /color <name> or /color static ends it."
+// The legend /color dynamic prints: a line per color. A terminal draws it in
+// the colors themselves (the CommandOutput hook below); LEGEND is the text the
+// transcript keeps and any other surface shows, LEGEND_LINES the resume notice.
+const LEGEND_ROWS: { state: State; means: string; when: string }[] = [
+  { state: 'working', means: 'working', when: 'Claude is on your prompt' },
+  { state: 'needsYou', means: 'needs you', when: 'a permission prompt or a question is waiting on you' },
+  { state: 'done', means: 'done', when: 'the turn finished: your move' },
+  { state: 'failed', means: 'failed', when: 'an error, or you interrupted it' },
+]
+const LEGEND_TITLE = "Color Code dynamic is on: the tab's color now says what Claude is doing."
+const LEGEND_END = '/color <name> or /color static ends it.'
+const LEGEND = [LEGEND_TITLE, '', ...LEGEND_ROWS.map(r => `- **${STATES[r.state]}**: ${r.means}, ${r.when}`), '', LEGEND_END].join('\n')
+const LEGEND_LINES = [LEGEND_TITLE, ...LEGEND_ROWS.map(r => `  ${STATES[r.state].padEnd(7)} ${r.means.padEnd(10)} ${r.when}`), LEGEND_END].join('\n')
 
 type Variant = 'dark' | 'light'
 type Mode = Variant | 'auto'
@@ -435,7 +447,7 @@ export const register: Register = (on, options) => {
         (await savedColor($, e.cwd)) ??
         (autoColor && !wasDynamic ? projectColor(await $.session.root().catch(() => e.cwd)) : undefined)
       if (pick !== undefined || wasDynamic) await apply($, pick, 'session start', { dynamic: wasDynamic })
-      if (wasDynamic && !reloaded) $.ui.log(LEGEND)
+      if (wasDynamic && !reloaded) $.ui.log(LEGEND_LINES)
       later($, () => offerTabs($), 2500)
     } catch (err) {
       await log($, `session.start: ${String(err)}`)
@@ -501,6 +513,32 @@ export const register: Register = (on, options) => {
       await log($, `/color: ${String(err)}`)
     }
     return ran
+  }).catch(($, e, next) => next(e))
+
+  // The legend in color: a swatch of each state's own tab color, a line each.
+  on('ui.render', { component: 'CommandOutput' }, async ($, e, next) => {
+    // Core shows a plugin's answer under its name ("color-code: ..."), so match the end.
+    if (typeof e.props.text !== 'string' || !e.props.text.endsWith(LEGEND)) return next(e)
+    const { Box, Text } = $.ui.resolve(e)
+    const rows = await Promise.all(
+      LEGEND_ROWS.map(async r => ({ ...r, color: STATES[r.state], tab: (await palette($, STATES[r.state]))?.tab ?? STATES[r.state] })),
+    )
+    return (
+      <Box flexDirection="column">
+        <Text bold>{LEGEND_TITLE}</Text>
+        <Box flexDirection="column" paddingY={1}>
+          {rows.map(r => (
+            <Box key={r.state} flexDirection="row">
+              <Text color={r.tab}>{'  ██ '}</Text>
+              <Text color={r.tab} bold>{r.color.padEnd(8)}</Text>
+              <Text bold>{r.means.padEnd(11)}</Text>
+              <Text dimColor>{r.when}</Text>
+            </Box>
+          ))}
+        </Box>
+        <Text dimColor>{LEGEND_END}</Text>
+      </Box>
+    )
   }).catch(($, e, next) => next(e))
 
   on('command.run', { command: 'color-code' }, async ($, e) => ({ text: await colorCode($, e.args) })).catch(

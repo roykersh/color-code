@@ -71,7 +71,7 @@ test('/color dynamic, light and unknown words are answered without the built-in'
     return { text: '' }
   })
   const dyn = await $.command.run(color('dynamic'))
-  expect(dyn.text).toContain('yellow = working')
+  expect(dyn.text).toContain('- **yellow**: working')
   expect(runs.at(-1)?.[0]).toContain('osc.exe')
   const light = await $.command.run(color('light'))
   expect(light.text).toContain('light')

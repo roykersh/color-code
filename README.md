@@ -30,6 +30,15 @@ Sessions already open pick it up after a restart (`/exit`, then `claude -c`).
 With `/color dynamic` the tab's color follows Claude, so a glance across your
 tabs tells you which session needs you:
 
+<table>
+  <tr>
+    <td width="70%"><img src="assets/dynamic.gif" alt="/color dynamic: the colored legend, then yellow while Claude works, blue at a permission prompt, green when done, red after Esc"></td>
+    <td><img src="assets/legend.svg" alt="yellow = working, blue = needs you, green = done, red = failed"></td>
+  </tr>
+</table>
+
+Exactly when each color shows:
+
 | Color | Means | When |
 | --- | --- | --- |
 | 🟨 **yellow** | working | from the moment you send a prompt until the turn ends |
@@ -37,11 +46,10 @@ tabs tells you which session needs you:
 | 🟩 **green** | done | the turn finished; your move whenever you like |
 | 🟥 **red** | failed | the turn ended in an error, a refusal, or you interrupted it |
 
-![/color dynamic: yellow while Claude works, blue at a permission prompt, green when done, red after Esc](assets/dynamic.gif)
-
-The legend is printed in the session when you turn it on, and again when a
-dynamic session is resumed. `/color <name>` or `/color static` goes back to a
-fixed color. A resumed session stays dynamic.
+The same legend is printed in the session when you turn it on, a line per
+color in the colors themselves, and again when a dynamic session is resumed.
+`/color <name>` or `/color static` goes back to a fixed color. A resumed
+session stays dynamic.
 
 ## What you get
 
