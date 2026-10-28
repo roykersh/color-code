@@ -31,7 +31,8 @@ const STATES = { working: 'yellow', background: 'purple', needsYou: 'blue', done
 type State = keyof typeof STATES
 // The legend /color dynamic prints: a line per color. A terminal draws it in
 // the colors themselves (the CommandOutput hook below); LEGEND is the text the
-// transcript keeps and any other surface shows, LEGEND_LINES the resume notice.
+// transcript keeps and any other surface shows, LEGEND_LINE the start and resume
+// notice ($.ui.log draws one line).
 const LEGEND_ROWS: { state: State; means: string; when: string }[] = [
   { state: 'working', means: 'working', when: 'Claude is on your prompt' },
   { state: 'background', means: 'subagent', when: 'the turn is over but a subagent still runs: you can type' },
@@ -42,7 +43,7 @@ const LEGEND_ROWS: { state: State; means: string; when: string }[] = [
 const LEGEND_TITLE = "Color Code dynamic is on: the tab's color now says what Claude is doing."
 const LEGEND_END = '/color <name> or /color static ends it.'
 const LEGEND = [LEGEND_TITLE, '', ...LEGEND_ROWS.map(r => `- **${STATES[r.state]}**: ${r.means}, ${r.when}`), '', LEGEND_END].join('\n')
-const LEGEND_LINES = [LEGEND_TITLE, ...LEGEND_ROWS.map(r => `  ${STATES[r.state].padEnd(7)} ${r.means.padEnd(10)} ${r.when}`), LEGEND_END].join('\n')
+const LEGEND_LINE = `Color Code dynamic is on: ${LEGEND_ROWS.map(r => `${STATES[r.state]} ${r.means}`).join(' · ')}. ${LEGEND_END}`
 
 type Variant = 'dark' | 'light'
 type Mode = Variant | 'auto'
@@ -471,7 +472,7 @@ export const register: Register = (on, options) => {
         (await savedColor($, e.cwd)) ??
         (autoColor && !wasDynamic ? projectColor(await $.session.root().catch(() => e.cwd)) : undefined)
       if (pick !== undefined || wasDynamic) await apply($, pick, 'session start', { dynamic: wasDynamic })
-      if (wasDynamic && !reloaded) $.ui.log(LEGEND_LINES)
+      if (wasDynamic && !reloaded) $.ui.log(LEGEND_LINE)
       later($, () => offerTabs($), 2500)
     } catch (err) {
       await log($, `session.start: ${String(err)}`)

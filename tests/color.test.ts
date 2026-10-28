@@ -188,5 +188,8 @@ test('COLOR_CODE_START=dynamic starts a new session in /color dynamic', async ($
   })
   await $.session.start({ cwd: 'C:/proj', surface: null, isInteractive: true })
   expect(runs.some(argv => argv[0]?.endsWith('/bin/osc.exe'))).toBe(true)
-  expect(logged.join('\n')).toContain('working')
+  // $.ui.log draws one line: the legend goes in one, every state named.
+  expect(logged).toHaveLength(1)
+  expect(logged[0]).not.toContain('\n')
+  expect(logged[0]).toContain('purple subagent')
 })
