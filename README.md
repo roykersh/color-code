@@ -32,8 +32,8 @@ tabs tells you which session needs you:
 
 <table>
   <tr>
-    <td width="70%"><img src="assets/dynamic.gif" alt="/color dynamic: the colored legend, then yellow while Claude works, blue at a permission prompt, green when done, red after Esc"></td>
-    <td><img src="assets/legend.svg" alt="yellow = working, blue = needs you, green = done, red = failed"></td>
+    <td width="70%"><img src="assets/dynamic.gif" alt="/color dynamic: the colored legend, then yellow while Claude works, blue at a permission prompt, green when done, purple while a background subagent runs, red after Esc"></td>
+    <td><img src="assets/legend.svg" alt="yellow = working, purple = subagent, blue = needs you, green = done, red = failed"></td>
   </tr>
 </table>
 
@@ -42,6 +42,7 @@ Exactly when each color shows:
 | Color | Means | When |
 | --- | --- | --- |
 | 🟨 **yellow** | working | from the moment you send a prompt until the turn ends |
+| 🟪 **purple** | subagent | the turn is over but a subagent it started still runs; you can type, and its result comes in when it finishes |
 | 🟦 **blue** | needs you | a permission prompt or a question (AskUserQuestion, an MCP form) is waiting on you, or the turn ended by asking you something |
 | 🟩 **green** | done | the turn finished; your move whenever you like |
 | 🟥 **red** | failed | the turn ended in an error, a refusal, or you interrupted it |
@@ -138,6 +139,9 @@ contrast in each theme and refuses to write one under 4.5:1. Rebuild the
 helper with `csc /target:exe /out:bin\osc.exe tools\osc.cs` (the C# compiler
 that ships with Windows under `C:\Windows\Microsoft.NET\Framework64\v4.0.30319`).
 
+Set `COLOR_CODE_START=dynamic` in the environment Claude Code starts in to
+have the session start in `/color dynamic` (handy in a launcher script).
+
 Set `COLOR_CODE_DEBUG=1` to have the plugin log each step to `debug.log`.
 
 ## Roadmap
@@ -149,7 +153,7 @@ Ideas, roughly in order:
 - Name on the tab: show the session's `/rename` name as the terminal tab title.
 - Per-project color file: a `.claude/color` a team commits so a repo opens in
   its color for everyone.
-- Dynamic palettes of your own (pick the four state colors).
+- Dynamic palettes of your own (pick the five state colors).
 - High-contrast and colorblind-safe sets.
 - VS Code and JetBrains terminals (they ignore most OSC color sequences today).
 

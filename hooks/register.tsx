@@ -27,13 +27,14 @@ const HEAL_MS = 3000
 const WATCH_MS = 500
 
 // /color dynamic: the color says what Claude is doing.
-const STATES = { working: 'yellow', needsYou: 'blue', done: 'green', failed: 'red' } as const
+const STATES = { working: 'yellow', background: 'purple', needsYou: 'blue', done: 'green', failed: 'red' } as const
 type State = keyof typeof STATES
 // The legend /color dynamic prints: a line per color. A terminal draws it in
 // the colors themselves (the CommandOutput hook below); LEGEND is the text the
 // transcript keeps and any other surface shows, LEGEND_LINES the resume notice.
 const LEGEND_ROWS: { state: State; means: string; when: string }[] = [
   { state: 'working', means: 'working', when: 'Claude is on your prompt' },
+  { state: 'background', means: 'subagent', when: 'the turn is over but a subagent still runs: you can type' },
   { state: 'needsYou', means: 'needs you', when: 'a permission prompt or a question is waiting on you' },
   { state: 'done', means: 'done', when: 'the turn finished: your move' },
   { state: 'failed', means: 'failed', when: 'an error, or you interrupted it' },
@@ -57,6 +58,7 @@ let ownTheme: string | undefined // the person's Claude theme
 let showActivity = false
 let turning = false
 const waiting: string[] = [] // what is waiting on the person
+let background = 0 // subagents still running
 let lastBatch = ''
 let lastSentAt = 0
 let lastWidth = 0
@@ -71,7 +73,9 @@ let transcriptPath: string | undefined
 const palettes = new Map<string, TerminalPalette>()
 
 const variant = (): Variant => (mode !== 'auto' ? mode : /light/i.test(ownTheme ?? '') ? 'light' : 'dark')
-const state = (): State => (waiting.length > 0 ? 'needsYou' : turning ? 'working' : ended)
+// A turn that ended on a question to you stays blue while subagents run.
+const state = (): State =>
+  waiting.length > 0 ? 'needsYou' : turning ? 'working' : background > 0 && ended !== 'needsYou' ? 'background' : ended
 // The color on the tab now.
 const shown = (): string | undefined => (dynamic ? STATES[state()] : color)
 const themeFile = (name: string | undefined) => (name === undefined ? undefined : variant() === 'light' ? `${name}-light` : name)
@@ -189,7 +193,10 @@ async function claudeHome($: EngineInterface) {
 function keepHealing($: EngineInterface) {
   if (shown() !== undefined && heal === undefined) {
     try {
-      heal = $.clock.every(HEAL_MS, () => void paint($, { heal: true }))
+      heal = $.clock.every(HEAL_MS, async () => {
+        if (dynamic) await countAgents($)
+        await paint($, { heal: true })
+      })
     } catch {
       heal = undefined
     }
@@ -261,6 +268,21 @@ function repaintSoon($: EngineInterface) {
 // Claude's state moved: repaint when it shows (dynamic color or the ring).
 function stateChanged($: EngineInterface) {
   if (dynamic || showActivity) later($, () => paint($))
+}
+
+// Subagents (not teammates) still running. An agent's status flips a moment
+// after its last turn ends, so callers look again a little later too.
+async function countAgents($: EngineInterface) {
+  const agents = await $.agent.list().catch(() => [])
+  const n = agents.filter(a => (a.status === 'running' || a.status === 'pending') && !a.teammateId).length
+  if (n === background) return
+  background = n
+  await log($, `subagents running: ${n}`)
+  stateChanged($)
+}
+
+function agentsSoon($: EngineInterface) {
+  for (const ms of [1, 1500]) later($, () => countAgents($), ms)
 }
 
 // ---- where the color comes from -------------------------------------------
@@ -371,7 +393,7 @@ function usage(): string {
   return [
     `/color ${HINT}`,
     `  ${COLORS.join(', ')}: color this session's tab.`,
-    "  dynamic: the color follows Claude's state (yellow working, blue needs you, green done, red failed); static ends it.",
+    "  dynamic: the color follows Claude's state (yellow working, purple a subagent still runs, blue needs you, green done, red failed); static ends it.",
     '  light, dark, auto: the pale or the dark variant of each color, or follow your Claude theme.',
     '  default: back to the terminal\'s own colors.',
   ].join('\n')
@@ -441,7 +463,9 @@ export const register: Register = (on, options) => {
       const [keptId, kept = '-', how = ''] = ((await $.env.get('COLOR_CODE_STATE')) ?? '').split(' ')
       const reloaded = keptId === id
       const sessions = ((await $.store.get('sessions').catch(() => undefined)) ?? {}) as Record<string, Remembered>
-      const wasDynamic = reloaded ? how === 'dynamic' : sessions[id]?.dynamic === true
+      // COLOR_CODE_START=dynamic: a launcher asks for a session that starts dynamic.
+      const startDynamic = (await $.env.get('COLOR_CODE_START'))?.toLowerCase() === 'dynamic'
+      const wasDynamic = reloaded ? how === 'dynamic' : startDynamic || sessions[id]?.dynamic === true
       const pick =
         (reloaded && COLORS.includes(kept) ? kept : undefined) ??
         (await savedColor($, e.cwd)) ??
@@ -578,7 +602,7 @@ export const register: Register = (on, options) => {
       turning = true
       waiting.length = 0
       later($, () => paint($, { heal: true }))
-    }
+    } else agentsSoon($)
     return next(e)
   })
 
@@ -592,6 +616,7 @@ export const register: Register = (on, options) => {
       ended = e.reason === 'answer' ? (asked ? 'needsYou' : 'done') : 'failed'
       later($, () => paint($, { heal: true }))
     }
+    agentsSoon($)
     return done
   })
 
@@ -640,6 +665,7 @@ export const register: Register = (on, options) => {
     try {
       turning = false
       waiting.length = 0
+      background = 0
       // A /clear or a resume goes on in this tab: the color and its healing stay.
       if (e.reason !== 'clear' && e.reason !== 'resume') {
         stopHealing()

@@ -144,3 +144,49 @@ test('an exit resets only a tab this session painted', async ($, on) => {
   await $.session.end(ended('prompt_input_exit'))
   expect(runs.at(-1)).toContain('111')
 })
+
+test('/color dynamic turns purple while a subagent outlives the turn, green once it ends', async ($, on) => {
+  const runs: string[][] = []
+  const clock = mock.clock(on)
+  mock.store(on)
+  mock.env(on, { OS: 'Windows_NT', USERPROFILE: 'C:/Users/me' })
+  // Each theme's background names it, so the batch shows which color went out.
+  on('fs.read', ($, e) => ({ value: JSON.stringify({ terminal: { ...THEME.terminal, background: /themes.(\w+)\.json/.exec(e.path)?.[1] } }) }))
+  on('fs.write', () => ({ value: undefined }))
+  on('fs.exists', () => ({ value: false }))
+  on('env.set', () => ({ value: {} }))
+  on('session.id', () => ({ value: 's1' }))
+  on('process.run', ($, e) => {
+    runs.push([...e.argv])
+    return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  let status: 'running' | 'completed' = 'running'
+  on('agent.list', () => ({ value: [{ id: 'a1', description: 'research', type: 'general-purpose', status }] }))
+  on('turn.start', ($, e) => ({ turnId: e.turnId }))
+  on('turn.complete', () => ({ text: 'Started a subagent.' }))
+  await $.command.run(color('dynamic'))
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  await $.turn.complete({ answer: 'Started a subagent.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  await clock.advance(10)
+  expect(runs.at(-1)).toContain('11;purple')
+  status = 'completed'
+  await clock.advance(3000)
+  expect(runs.at(-1)).toContain('11;green')
+})
+
+test('COLOR_CODE_START=dynamic starts a new session in /color dynamic', async ($, on) => {
+  const runs: string[][] = []
+  const logged: string[] = []
+  engine(on, runs)
+  mock.env(on, { OS: 'Windows_NT', USERPROFILE: 'C:/Users/me', COLOR_CODE_START: 'dynamic' })
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('session.root', () => ({ value: 'C:/proj' }))
+  on('settings.read', () => ({ value: {} }))
+  on('ui.log', ($, e) => {
+    logged.push(String(e.text ?? e))
+    return { value: undefined }
+  })
+  await $.session.start({ cwd: 'C:/proj', surface: null, isInteractive: true })
+  expect(runs.some(argv => argv[0]?.endsWith('/bin/osc.exe'))).toBe(true)
+  expect(logged.join('\n')).toContain('working')
+})
