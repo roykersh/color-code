@@ -35,7 +35,7 @@ type State = keyof typeof STATES
 // notice ($.ui.log draws one line).
 const LEGEND_ROWS: { state: State; means: string; when: string }[] = [
   { state: 'working', means: 'working', when: 'Claude is on your prompt' },
-  { state: 'background', means: 'subagent', when: 'the turn is over but a subagent still runs: you can type' },
+  { state: 'background', means: 'background', when: 'the turn is over but a subagent or a background shell still runs: you can type' },
   { state: 'needsYou', means: 'needs you', when: 'a permission prompt or a question is waiting on you' },
   { state: 'done', means: 'done', when: 'the turn finished: your move' },
   { state: 'failed', means: 'failed', when: 'an error, or you interrupted it' },
@@ -60,6 +60,7 @@ let showActivity = false
 let turning = false
 const waiting: string[] = [] // what is waiting on the person
 let background = 0 // subagents still running
+let shells = 0 // background shells, monitors and workflows the last Stop saw running
 let lastBatch = ''
 let lastSentAt = 0
 let lastWidth = 0
@@ -74,9 +75,9 @@ let transcriptPath: string | undefined
 const palettes = new Map<string, TerminalPalette>()
 
 const variant = (): Variant => (mode !== 'auto' ? mode : /light/i.test(ownTheme ?? '') ? 'light' : 'dark')
-// A turn that ended on a question to you stays blue while subagents run.
+// A turn that ended on a question to you stays blue while background work runs.
 const state = (): State =>
-  waiting.length > 0 ? 'needsYou' : turning ? 'working' : background > 0 && ended !== 'needsYou' ? 'background' : ended
+  waiting.length > 0 ? 'needsYou' : turning ? 'working' : background + shells > 0 && ended !== 'needsYou' ? 'background' : ended
 // The color on the tab now.
 const shown = (): string | undefined => (dynamic ? STATES[state()] : color)
 const themeFile = (name: string | undefined) => (name === undefined ? undefined : variant() === 'light' ? `${name}-light` : name)
@@ -175,6 +176,11 @@ function paint($: EngineInterface, opts: { heal?: boolean; reset?: boolean } = {
 }
 
 async function paintOnce($: EngineInterface, opts: { heal?: boolean; reset?: boolean }) {
+  // A background session paints nothing (Claude Code keeps its own tab writes
+  // out of one too): its colors would reach the tab of the client attached to
+  // it, where that client's Color Code paints its own state, and the two
+  // would take turns on every change and heal.
+  if ((await platform($)).bgWorker) return
   const bodies = await batch($, Boolean(opts.reset))
   const key = bodies.join('|')
   const now = await $.clock.now()
@@ -286,6 +292,22 @@ function agentsSoon($: EngineInterface) {
   for (const ms of [1, 1500]) later($, () => countAgents($), ms)
 }
 
+// Background shells (run_in_background, Monitor), workflows and the like are no
+// agents, and nothing lists them between turns: the Stop that ends each turn
+// does. Subagents are left to $.agent.list, which stays current while idle.
+// Claude Code names them local_agent, remote_agent, in_process_teammate; a finished
+// agent stays listed (it can be resumed), so only running work counts.
+const AGENT_TASKS = /agent|teammate/i
+const LIVE_TASKS = ['running', 'pending']
+
+function countShells($: EngineInterface, tasks: readonly { type: string; status: string }[]) {
+  const n = tasks.filter(t => !AGENT_TASKS.test(t.type) && LIVE_TASKS.includes(t.status)).length
+  if (n === shells) return
+  shells = n
+  void log($, `background shells running: ${n}`)
+  stateChanged($)
+}
+
 // ---- where the color comes from -------------------------------------------
 
 async function transcriptFile($: EngineInterface, cwd: string): Promise<string | undefined> {
@@ -394,7 +416,7 @@ function usage(): string {
   return [
     `/color ${HINT}`,
     `  ${COLORS.join(', ')}: color this session's tab.`,
-    "  dynamic: the color follows Claude's state (yellow working, purple a subagent still runs, blue needs you, green done, red failed); static ends it.",
+    "  dynamic: the color follows Claude's state (yellow working, purple a subagent or background shell still runs, blue needs you, green done, red failed); static ends it.",
     '  light, dark, auto: the pale or the dark variant of each color, or follow your Claude theme.',
     '  default: back to the terminal\'s own colors.',
   ].join('\n')
@@ -621,6 +643,14 @@ export const register: Register = (on, options) => {
     return done
   })
 
+  // The main loop's turn ends: what background work it leaves running. A shell
+  // that finishes later wakes a turn of its own (its notification), whose Stop
+  // counts again.
+  on('classic.Stop', async ($, e, next) => {
+    if (Array.isArray(e.background_tasks)) countShells($, e.background_tasks)
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
   // A permission prompt is up.
   on('classic.PermissionRequest', async ($, e, next) => {
     const decided = await next(e)
@@ -667,6 +697,7 @@ export const register: Register = (on, options) => {
       turning = false
       waiting.length = 0
       background = 0
+      shells = 0
       // A /clear or a resume goes on in this tab: the color and its healing stay.
       if (e.reason !== 'clear' && e.reason !== 'resume') {
         stopHealing()

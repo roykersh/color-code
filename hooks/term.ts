@@ -12,6 +12,9 @@ export type Platform = {
   iterm: boolean
   // OSC 9;4 is a tab progress ring here; elsewhere OSC 9 is a notification.
   progress: boolean
+  // A background session (/bg, a daemon worker) has no tab of its own: what it
+  // writes reaches whichever client attaches, over that client's own colors.
+  bgWorker: boolean
 }
 
 let found: Platform | undefined
@@ -30,6 +33,7 @@ export async function platform($: EngineInterface): Promise<Platform> {
     tmux,
     iterm: !windows && (program === 'iTerm.app' || Boolean(await $.env.get('ITERM_SESSION_ID'))),
     progress: wt || conemu || ghostty,
+    bgWorker: (await $.env.get('CLAUDE_CODE_SESSION_KIND')) === 'bg',
   }
   // Lets this pane's wrapped sequences through (tmux 3.3+); a pane option, so
   // nothing in the person's tmux.conf changes.

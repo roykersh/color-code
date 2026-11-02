@@ -191,5 +191,61 @@ test('COLOR_CODE_START=dynamic starts a new session in /color dynamic', async ($
   // $.ui.log draws one line: the legend goes in one, every state named.
   expect(logged).toHaveLength(1)
   expect(logged[0]).not.toContain('\n')
-  expect(logged[0]).toContain('purple subagent')
+  expect(logged[0]).toContain('purple background')
+})
+
+// Each theme's background names it, so the batch shows which color went out.
+function named(on: On, runs: string[][], env: Record<string, string>) {
+  const clock = mock.clock(on)
+  mock.store(on)
+  mock.env(on, { OS: 'Windows_NT', USERPROFILE: 'C:/Users/me', ...env })
+  on('fs.read', ($, e) => ({ value: JSON.stringify({ terminal: { ...THEME.terminal, background: /themes.(\w+)\.json/.exec(e.path)?.[1] } }) }))
+  on('fs.write', () => ({ value: undefined }))
+  on('fs.exists', () => ({ value: false }))
+  on('env.set', () => ({ value: {} }))
+  on('session.id', () => ({ value: 's1' }))
+  on('process.run', ($, e) => {
+    runs.push([...e.argv])
+    return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  on('agent.list', () => ({ value: [] }))
+  on('turn.start', ($, e) => ({ turnId: e.turnId }))
+  on('turn.complete', () => ({ text: 'Started it.' }))
+  on('classic.Stop', () => ({}))
+  on('command.run', () => ({ text: '' }))
+  return clock
+}
+
+const shell = { id: 'b1', type: 'shell', status: 'running', description: 'Run the routine', command: 'python daily_lectures.py' }
+
+test('/color dynamic turns purple while a background shell outlives the turn, green once its notification turn ends', async ($, on) => {
+  const runs: string[][] = []
+  const clock = named(on, runs, {})
+  await $.command.run(color('dynamic'))
+  await $.turn.start({ text: 'run the routine', turnId: 't1' })
+  // No agent: only the Stop at the turn's end knows the shell still runs.
+  await $.classic.Stop({ stop_hook_active: false, background_tasks: [shell] })
+  await $.turn.complete({ answer: 'Started it.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  await clock.advance(3000)
+  expect(runs.at(-1)).toContain('11;purple')
+  // The shell ends: its notification is a turn of its own. A finished subagent stays
+  // listed (it can be resumed) under Claude Code's own type name; neither counts.
+  await $.turn.start({ text: '', turnId: 't2' })
+  const doneAgent = { id: 'a1', type: 'local_agent', status: 'completed', description: 'Fix the colors' }
+  await $.classic.Stop({ stop_hook_active: false, background_tasks: [{ ...shell, status: 'completed' }, doneAgent] })
+  await $.turn.complete({ answer: 'Done.', durationMs: 1, isAborted: false, turnId: 't2', reason: 'answer' })
+  await clock.advance(10)
+  expect(runs.at(-1)).toContain('11;green')
+})
+
+test("a background session (/bg) paints nothing: the attached tab is its client's to color", async ($, on) => {
+  const runs: string[][] = []
+  const clock = named(on, runs, { CLAUDE_CODE_SESSION_KIND: 'bg' })
+  await $.command.run(color('dynamic'))
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  await clock.advance(10)
+  await $.turn.complete({ answer: 'Done.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  await clock.advance(10_000)
+  await $.command.run(color('red'))
+  expect(runs.some(argv => argv[0]?.endsWith('/bin/osc.exe'))).toBe(false)
 })

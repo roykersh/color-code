@@ -42,7 +42,7 @@ Exactly when each color shows:
 | Color | Means | When |
 | --- | --- | --- |
 | 🟨 **yellow** | working | from the moment you send a prompt until the turn ends |
-| 🟪 **purple** | subagent | the turn is over but a subagent it started still runs; you can type, and its result comes in when it finishes |
+| 🟪 **purple** | background | the turn is over but a subagent or a background shell (`run_in_background`, Monitor) it started still runs; you can type, and its result comes in when it finishes |
 | 🟦 **blue** | needs you | a permission prompt or a question (AskUserQuestion, an MCP form) is waiting on you, or the turn ended by asking you something |
 | 🟩 **green** | done | the turn finished; your move whenever you like |
 | 🟥 **red** | failed | the turn ended in an error, a refusal, or you interrupted it |
@@ -128,6 +128,9 @@ option in `/config`, and turn off Claude's own with `terminalProgressBarEnabled`
   so a tab's colors live in the terminal session itself and are lost when the
   tab moves to another window or the settings reload. Color Code repaints them
   (above); a moved tab can show its default colors for a moment.
+- A background session (`/bg`) has no tab of its own, so Color Code paints
+  nothing from it: a tab attached to one keeps the colors of the session
+  running in that tab.
 - Light variants assume a light Claude theme: with a dark Claude theme, its
   light text would sit on a pale tab. `/color auto` (the default) avoids that.
 
