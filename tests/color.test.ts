@@ -232,7 +232,8 @@ test('/color dynamic turns purple while a background shell outlives the turn, gr
   // listed (it can be resumed) under Claude Code's own type name; neither counts.
   await $.turn.start({ text: '', turnId: 't2' })
   const doneAgent = { id: 'a1', type: 'local_agent', status: 'completed', description: 'Fix the colors' }
-  await $.classic.Stop({ stop_hook_active: false, background_tasks: [{ ...shell, status: 'completed' }, doneAgent] })
+  const remote = { id: 'r1', type: 'remote_control', status: 'running', description: 'Remote Control' }
+  await $.classic.Stop({ stop_hook_active: false, background_tasks: [{ ...shell, status: 'completed' }, doneAgent, remote] })
   await $.turn.complete({ answer: 'Done.', durationMs: 1, isAborted: false, turnId: 't2', reason: 'answer' })
   await clock.advance(10)
   expect(runs.at(-1)).toContain('11;green')

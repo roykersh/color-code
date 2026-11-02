@@ -1,6 +1,6 @@
 {
   "name": "color-code",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "/color colors the whole terminal tab per Claude Code session (background, palette, Windows Terminal tab and title bar), or with /color dynamic follows Claude's state: yellow working, purple a subagent or background shell still running, blue needs you, green done, red failed. Windows Terminal, macOS and Linux.",
   "author": {
     "name": "Roy Kershberg"

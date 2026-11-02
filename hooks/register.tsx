@@ -295,13 +295,13 @@ function agentsSoon($: EngineInterface) {
 // Background shells (run_in_background, Monitor), workflows and the like are no
 // agents, and nothing lists them between turns: the Stop that ends each turn
 // does. Subagents are left to $.agent.list, which stays current while idle.
-// Claude Code names them local_agent, remote_agent, in_process_teammate; a finished
-// agent stays listed (it can be resumed), so only running work counts.
-const AGENT_TASKS = /agent|teammate/i
+// Only work the session started counts (local_bash, local_workflow, monitors): the
+// list also holds standing tasks such as remote_control, running for the whole session.
+const SHELL_TASKS = /bash|shell|workflow|monitor/i
 const LIVE_TASKS = ['running', 'pending']
 
 function countShells($: EngineInterface, tasks: readonly { type: string; status: string }[]) {
-  const n = tasks.filter(t => !AGENT_TASKS.test(t.type) && LIVE_TASKS.includes(t.status)).length
+  const n = tasks.filter(t => SHELL_TASKS.test(t.type) && LIVE_TASKS.includes(t.status)).length
   if (n === shells) return
   shells = n
   void log($, `background shells running: ${n}`)
