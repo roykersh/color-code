@@ -72,6 +72,7 @@ let heal: { cancel: () => void } | undefined
 let watch: { cancel: () => void } | undefined
 let seenStamp: string | undefined
 let transcriptPath: string | undefined
+let sessionCwd: string | undefined
 const palettes = new Map<string, TerminalPalette>()
 
 const variant = (): Variant => (mode !== 'auto' ? mode : /light/i.test(ownTheme ?? '') ? 'light' : 'dark')
@@ -275,6 +276,7 @@ function repaintSoon($: EngineInterface) {
 // Claude's state moved: repaint when it shows (dynamic color or the ring).
 function stateChanged($: EngineInterface) {
   if (dynamic || showActivity) later($, () => paint($))
+  retitleSoon($)
 }
 
 // Subagents (not teammates) still running. An agent's status flips a moment
@@ -295,17 +297,105 @@ function agentsSoon($: EngineInterface) {
 // Background shells (run_in_background, Monitor), workflows and the like are no
 // agents, and nothing lists them between turns: the Stop that ends each turn
 // does. Subagents are left to $.agent.list, which stays current while idle.
-// Only work the session started counts (local_bash, local_workflow, monitors): the
-// list also holds standing tasks such as remote_control, running for the whole session.
-const SHELL_TASKS = /bash|shell|workflow|monitor/i
+// Only work the session started counts: shells (a Monitor tool's watch is a
+// shell too) and workflows. The list also holds standing tasks that run for the
+// whole session: Stop names an artifact comment watch and an MCP monitor
+// "monitor", besides remote_control and the like. None of them ever ends a
+// turn, so matching them kept the tab purple for good. Exact names only.
+const SHELL_TASKS = new Set(['shell', 'workflow', 'local_bash', 'local_workflow'])
 const LIVE_TASKS = ['running', 'pending']
 
 function countShells($: EngineInterface, tasks: readonly { type: string; status: string }[]) {
-  const n = tasks.filter(t => SHELL_TASKS.test(t.type) && LIVE_TASKS.includes(t.status)).length
+  const n = tasks.filter(t => SHELL_TASKS.has(t.type) && LIVE_TASKS.includes(t.status)).length
   if (n === shells) return
   shells = n
   void log($, `background shells running: ${n}`)
   stateChanged($)
+}
+
+// ---- the tab's title --------------------------------------------------------
+
+// Claude Code's own tab title flips ◐/◑ in front of the name while it works.
+// With CLAUDE_CODE_DISABLE_TERMINAL_TITLE set it writes no title at all, and
+// Color Code writes it instead: the session's name, with a still ✳ in front
+// only once the turn is over (done, or ended by an error or Esc). While it
+// works, waits on you or runs background work, the name stands alone.
+const IDLE_MARK = '✳'
+const NAME_MS = 10_000
+let titling = false
+let sessionName: string | undefined
+let lastTitle = ''
+let naming: { cancel: () => void } | undefined
+
+const idle = () => state() === 'done' || state() === 'failed'
+
+// The latest value of `field` among the transcript rows of type `kind`.
+function lastField(rows: string, kind: string, field: string): string | undefined {
+  for (const line of rows.split(/\r?\n/).reverse()) {
+    if (!line.includes(`"type":"${kind}"`)) continue
+    try {
+      const value = (JSON.parse(line) as Record<string, unknown>)[field]
+      if (typeof value === 'string' && value.trim()) return value.trim()
+    } catch {
+      // a row cut mid-way: try the one before
+    }
+  }
+  return undefined
+}
+
+// The session's name as Claude Code keeps it: a /rename first, else its own title.
+async function readName($: EngineInterface): Promise<string | undefined> {
+  try {
+    const file = await transcriptFile($, sessionCwd ?? (await $.session.cwd()))
+    if (!file) return undefined
+    const p = await platform($)
+    const found = await $.process
+      .run(
+        p.windows
+          ? ['findstr', '/R', '/C:^{.type.:.ai-title', '/C:^{.type.:.custom-title', file]
+          : ['grep', '-E', '^\\{"type":"(ai|custom)-title"', file],
+        { timeoutMs: 5000 },
+      )
+      .catch(() => undefined)
+    const rows = found?.stdout ?? ''
+    return lastField(rows, 'custom-title', 'customTitle') ?? lastField(rows, 'ai-title', 'aiTitle')
+  } catch {
+    return undefined
+  }
+}
+
+async function retitle($: EngineInterface) {
+  if (!titling) return
+  const name = (sessionName ?? 'Claude Code').replace(/[\x00-\x1f\x7f]/g, ' ').slice(0, 80)
+  const title = idle() ? `${IDLE_MARK} ${name}` : name
+  if (title === lastTitle) return
+  lastTitle = title
+  await log($, `title "${title}" -> ${await send($, $.plugin.root, [`0;${title}`])}`)
+}
+
+function retitleSoon($: EngineInterface) {
+  if (titling) later($, () => retitle($))
+}
+
+// Only when Claude Code was told to leave the title alone; never from a
+// background session, whose writes would land in another client's tab.
+async function startTitles($: EngineInterface) {
+  const off = ((await $.env.get('CLAUDE_CODE_DISABLE_TERMINAL_TITLE')) ?? '').trim().toLowerCase()
+  if (titling || off === '' || off === '0' || off === 'false') return
+  if ((await platform($)).bgWorker) return
+  titling = true
+  sessionName = await readName($)
+  await retitle($)
+  try {
+    naming = $.clock.every(NAME_MS, async () => {
+      const name = await readName($)
+      if (name === undefined || name === sessionName) return
+      sessionName = name
+      await retitle($)
+    })
+  } catch {
+    naming = undefined
+  }
 }
 
 // ---- where the color comes from -------------------------------------------
@@ -476,6 +566,8 @@ export const register: Register = (on, options) => {
     try {
       await log($, `session.start interactive=${e.isInteractive}`)
       if (!e.isInteractive) return started
+      sessionCwd = e.cwd
+      await startTitles($)
       const stored = await $.store.get('mode').catch(() => undefined)
       if (stored === 'light' || stored === 'dark' || stored === 'auto') mode = stored
       const theme = await $.settings.read({ key: 'theme' }).catch(() => undefined)
@@ -625,6 +717,7 @@ export const register: Register = (on, options) => {
       turning = true
       waiting.length = 0
       later($, () => paint($, { heal: true }))
+      retitleSoon($)
     } else agentsSoon($)
     return next(e)
   })
@@ -638,6 +731,7 @@ export const register: Register = (on, options) => {
       const asked = /\?\s*$/.test((done.text ?? '').replace(/[*_`)\]]+\s*$/, ''))
       ended = e.reason === 'answer' ? (asked ? 'needsYou' : 'done') : 'failed'
       later($, () => paint($, { heal: true }))
+      retitleSoon($)
     }
     agentsSoon($)
     return done
@@ -698,8 +792,16 @@ export const register: Register = (on, options) => {
       waiting.length = 0
       background = 0
       shells = 0
+      // A /clear starts a conversation with no name yet; the title follows it.
+      if (e.reason === 'clear') {
+        sessionName = undefined
+        transcriptPath = undefined
+        retitleSoon($)
+      }
       // A /clear or a resume goes on in this tab: the color and its healing stay.
       if (e.reason !== 'clear' && e.reason !== 'resume') {
+        naming?.cancel()
+        naming = undefined
         stopHealing()
         color = undefined
         dynamic = false

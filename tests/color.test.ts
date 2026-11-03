@@ -127,6 +127,13 @@ test('Windows Terminal setup adds the theme, keeps the rest, and undoes', () => 
   expect(follows(undone)).toBe(false)
 })
 
+test('the active tab stands out: the tab row is a neutral, not the pane color', () => {
+  const dark = withTheme(parseJsonc('{"theme": "dark"}')) as { themes: { name: string; tabRow: { background: string } }[] }
+  const light = withTheme(parseJsonc('{"theme": "light"}')) as typeof dark
+  expect(dark.themes.find(t => t.name === 'Color Code')?.tabRow.background).toBe('#0a0a0a')
+  expect(light.themes.find(t => t.name === 'Color Code')?.tabRow.background).toBe('#e6e6e6')
+})
+
 const ended = (reason: 'clear' | 'prompt_input_exit' | 'other') => ({ reason, sessionId: 's1', resume: { id: 's1' } })
 
 test('an exit resets only a tab this session painted', async ($, on) => {
@@ -249,4 +256,100 @@ test("a background session (/bg) paints nothing: the attached tab is its client'
   await clock.advance(10_000)
   await $.command.run(color('red'))
   expect(runs.some(argv => argv[0]?.endsWith('/bin/osc.exe'))).toBe(false)
+})
+
+test('an artifact comment watch or an MCP monitor (Stop calls both "monitor") never keeps the tab purple', async ($, on) => {
+  const runs: string[][] = []
+  const clock = named(on, runs, {})
+  await $.command.run(color('dynamic'))
+  await $.turn.start({ text: 'watch the artifact', turnId: 't1' })
+  const watch = { id: 'w1', type: 'monitor', status: 'running', description: 'Comments on Claude Bar Redesign' }
+  await $.classic.Stop({ stop_hook_active: false, background_tasks: [watch] })
+  await $.turn.complete({ answer: 'Watching it.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  await clock.advance(3000)
+  expect(runs.at(-1)).toContain('11;green')
+})
+
+// ---- the tab's title, when Claude Code leaves it to Color Code ----
+
+const MARK = '\u2733'
+const titles = (runs: string[][]) => runs.filter(argv => argv[0]?.endsWith('/bin/osc.exe') && argv[1]?.startsWith('0;')).map(argv => argv[1])
+
+function titleEngine(on: On, runs: string[][], env: Record<string, string>, rows: { value: string }, answer: { text: string }) {
+  const clock = mock.clock(on)
+  mock.store(on)
+  mock.env(on, { OS: 'Windows_NT', USERPROFILE: 'C:/Users/me', WT_SESSION: 'x', ...env })
+  on('fs.read', () => ({ value: JSON.stringify(THEME) }))
+  on('fs.write', () => ({ value: undefined }))
+  on('fs.exists', () => ({ value: true }))
+  on('env.set', () => ({ value: {} }))
+  on('session.id', () => ({ value: 's1' }))
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('session.root', () => ({ value: 'C:/proj' }))
+  on('settings.read', () => ({ value: {} }))
+  on('ui.log', () => ({ value: undefined }))
+  on('agent.list', () => ({ value: [] }))
+  on('turn.start', ($, e) => ({ turnId: e.turnId }))
+  on('turn.complete', () => ({ text: answer.text }))
+  on('classic.Stop', () => ({}))
+  on('command.run', () => ({ text: '' }))
+  on('process.run', ($, e) => {
+    runs.push([...e.argv])
+    const stdout = e.argv[0] === 'findstr' ? rows.value : ''
+    return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  return clock
+}
+
+test('with Claude Code\'s title off, the tab reads "✳ name" once a turn is done and the bare name while it works or waits on you', async ($, on) => {
+  const runs: string[][] = []
+  const rows = { value: '{"type":"ai-title","aiTitle":"Fix the bar","sessionId":"s1"}' }
+  const answer = { text: 'Done.' }
+  const clock = titleEngine(on, runs, { CLAUDE_CODE_DISABLE_TERMINAL_TITLE: '1' }, rows, answer)
+  await $.session.start({ cwd: 'C:/proj', surface: null, isInteractive: true })
+  expect(titles(runs).at(-1)).toBe(`0;${MARK} Fix the bar`)
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  await clock.advance(10)
+  expect(titles(runs).at(-1)).toBe('0;Fix the bar')
+  await $.turn.complete({ answer: 'Done.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  await clock.advance(10)
+  expect(titles(runs).at(-1)).toBe(`0;${MARK} Fix the bar`)
+  // A turn that ends on a question waits on you: no mark.
+  answer.text = 'Should I push it?'
+  await $.turn.start({ text: 'and now', turnId: 't2' })
+  await $.turn.complete({ answer: answer.text, durationMs: 1, isAborted: false, turnId: 't2', reason: 'answer' })
+  await clock.advance(10)
+  expect(titles(runs).at(-1)).toBe('0;Fix the bar')
+  // An interrupted turn is over too.
+  await $.turn.start({ text: 'go on', turnId: 't3' })
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: true, turnId: 't3', reason: 'aborted' })
+  await clock.advance(10)
+  expect(titles(runs).at(-1)).toBe(`0;${MARK} Fix the bar`)
+  // A /rename shows within the name check, and wins over Claude Code's own title.
+  rows.value += '\n{"type":"custom-title","customTitle":"color code","sessionId":"s1"}'
+  await clock.advance(10_000)
+  expect(titles(runs).at(-1)).toBe(`0;${MARK} color code`)
+  // The same title is never sent twice in a row.
+  const sent = titles(runs).length
+  await clock.advance(10_000)
+  expect(titles(runs)).toHaveLength(sent)
+})
+
+test("without CLAUDE_CODE_DISABLE_TERMINAL_TITLE the title stays Claude Code's", async ($, on) => {
+  const runs: string[][] = []
+  const clock = titleEngine(on, runs, {}, { value: '{"type":"ai-title","aiTitle":"Fix the bar"}' }, { text: 'Done.' })
+  await $.session.start({ cwd: 'C:/proj', surface: null, isInteractive: true })
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  await $.turn.complete({ answer: 'Done.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  await clock.advance(10_000)
+  expect(titles(runs)).toHaveLength(0)
+})
+
+test('a background session (/bg) never writes the title', async ($, on) => {
+  const runs: string[][] = []
+  const clock = titleEngine(on, runs, { CLAUDE_CODE_DISABLE_TERMINAL_TITLE: '1', CLAUDE_CODE_SESSION_KIND: 'bg' }, { value: '{"type":"ai-title","aiTitle":"Fix the bar"}' }, { text: 'Done.' })
+  await $.session.start({ cwd: 'C:/proj', surface: null, isInteractive: true })
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  await clock.advance(10_000)
+  expect(titles(runs)).toHaveLength(0)
 })

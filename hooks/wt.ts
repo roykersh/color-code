@@ -92,12 +92,21 @@ function appTheme(json: WtJson): string {
   return typeof own === 'string' ? own : 'dark'
 }
 
+// The tab row stays a plain neutral, not the active pane's color: the active
+// tab is then the one solid color, joined to its pane, and the others (drawn
+// at 30% over the row) recede yet keep their hue. With the row following the
+// active pane, tabs sharing a color all looked selected, and inactive tabs
+// took the active one's color. Opaque on purpose: a clear row shows the desktop.
+export const ROW = { dark: '#0a0a0a', light: '#e6e6e6' } as const
+
 // Pure: the settings with our theme added and active.
 export function withTheme(json: WtJson): WtJson {
+  const app = appTheme(json)
+  const row = app === 'light' ? ROW.light : ROW.dark
   const ours = {
     name: THEME,
-    window: { applicationTheme: appTheme(json), useMica: false },
-    tabRow: { background: 'terminalBackground', unfocusedBackground: 'terminalBackground' },
+    window: { applicationTheme: app, useMica: false },
+    tabRow: { background: row, unfocusedBackground: row },
     tab: { background: 'terminalBackground', unfocusedBackground: 'terminalBackground', showCloseButton: 'hover' },
   }
   return { ...json, themes: [...themes(json).filter(t => t?.name !== THEME), ours], theme: THEME }
