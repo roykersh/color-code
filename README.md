@@ -106,6 +106,24 @@ ring only flicker. If you'd rather have Color Code's ring (spinning while
 working, a full yellow ring while it waits on you), turn on the `activity`
 option in `/config`, and turn off Claude's own with `terminalProgressBarEnabled`.
 
+## Name on the tab
+
+Claude Code's own tab title flips a spinner while it works. Set
+`CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1` (in the `env` of `~/.claude/settings.json`)
+and Color Code writes the title instead: the session's name (your `/rename`,
+else Claude's title for the conversation) as `✳ name` once a turn is done, and
+the bare name while Claude works or waits on you. A background session (`/bg`)
+never writes a title. Tabs already open get it after a restart (`claude -c`).
+
+## Spotting the active tab
+
+The Windows Terminal theme from `/color-code setup` keeps the tab row a plain
+near-black (light grey with a light app theme) rather than the active pane's
+color. The active tab is then the one solid color, joined to its pane; the
+others are drawn fainter but keep their own hue, so tabs that share a color
+(all yellow while they work) no longer all look selected. On an install from
+before 0.5.0, run `/color-code setup` once to update the theme.
+
 ## Platforms
 
 - **Windows Terminal**: everything, including the tab and title bar. The colors
@@ -153,7 +171,6 @@ Ideas, roughly in order:
 
 - Claude's own UI colors following `/color`, as soon as Claude Code lets a
   plugin switch the theme of a running session.
-- Name on the tab: show the session's `/rename` name as the terminal tab title.
 - Per-project color file: a `.claude/color` a team commits so a repo opens in
   its color for everyone.
 - Dynamic palettes of your own (pick the five state colors).

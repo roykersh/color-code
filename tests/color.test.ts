@@ -1,6 +1,6 @@
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
-import { follows, parseJsonc, withoutTheme, withTheme } from '../hooks/wt.ts'
+import { follows, outdated, parseJsonc, withoutTheme, withTheme } from '../hooks/wt.ts'
 
 const THEME = {
   terminal: { background: '#340c0c', foreground: '#f8f7f1', cursor: '#e55f5f', tab: '#e55f5f', ansi: ['#000000', '#ff0000'] },
@@ -132,6 +132,11 @@ test('the active tab stands out: the tab row is a neutral, not the pane color', 
   const light = withTheme(parseJsonc('{"theme": "light"}')) as typeof dark
   expect(dark.themes.find(t => t.name === 'Color Code')?.tabRow.background).toBe('#0a0a0a')
   expect(light.themes.find(t => t.name === 'Color Code')?.tabRow.background).toBe('#e6e6e6')
+  expect(outdated(dark)).toBe(false)
+  const old = { ...dark, themes: dark.themes.map(t => ({ ...t, tabRow: { background: 'terminalBackground' } })) }
+  expect(follows(old)).toBe(true)
+  expect(outdated(old)).toBe(true)
+  expect(outdated(withTheme(old))).toBe(false)
 })
 
 const ended = (reason: 'clear' | 'prompt_input_exit' | 'other') => ({ reason, sessionId: 's1', resume: { id: 's1' } })

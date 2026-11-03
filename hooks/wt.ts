@@ -112,6 +112,15 @@ export function withTheme(json: WtJson): WtJson {
   return { ...json, themes: [...themes(json).filter(t => t?.name !== THEME), ours], theme: THEME }
 }
 
+// Pure: our theme is active but an older version of it (the tab row used to
+// follow the pane), so setup refreshes it in place.
+export function outdated(json: WtJson): boolean {
+  if (!activeNames(json).includes(THEME)) return false
+  const mine = themes(json).find(t => t?.name === THEME)
+  const fresh = themes(withTheme(json)).find(t => t?.name === THEME)
+  return JSON.stringify(mine) !== JSON.stringify(fresh)
+}
+
 // Pure: the settings with our theme gone and `previous` active again.
 export function withoutTheme(json: WtJson, previous: string | null | undefined): WtJson {
   const out: WtJson = { ...json, themes: themes(json).filter(t => t?.name !== THEME) }
@@ -150,7 +159,11 @@ export async function wtSetup($: EngineInterface, memory: WtMemory): Promise<{ t
       const text = await $.fs.read(file)
       const json = parseJsonc(text)
       if (follows(json)) {
-        lines.push(`${file}: tabs already follow the background.`)
+        if (outdated(json)) {
+          await $.fs.write(file, stringify(withTheme(json)))
+          changed = true
+          lines.push(`${file}: updated the "${THEME}" theme to this version.`)
+        } else lines.push(`${file}: tabs already follow the background.`)
         continue
       }
       const backup = `${file}.color-code.bak`
