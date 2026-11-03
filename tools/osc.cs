@@ -17,8 +17,50 @@ static class Osc {
     static extern bool WriteConsoleW(IntPtr handle, string text, uint length, out uint written, IntPtr reserved);
     [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
 
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint pid);
+    [DllImport("user32.dll")] static extern IntPtr GetKeyboardLayout(uint thread);
+
+    // osc.exe --watch: Windows Terminal drops every tab's OSC colors when the
+    // input language changes (Alt+Shift), and tells no one. This prints a line
+    // each time the layout of the Windows Terminal window in front changes, so
+    // the plugin repaints at once. It ends with the process that started it.
+    static int Watch() {
+        uint self = (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
+        uint[] chain = Ancestors(self);
+        System.Diagnostics.Process parent = null;
+        try { if (chain.Length > 0) parent = System.Diagnostics.Process.GetProcessById((int)chain[0]); } catch { }
+        var terminal = new System.Collections.Generic.Dictionary<uint, bool>();
+        IntPtr last = IntPtr.Zero;
+        bool seen = false;
+        for (int tick = 1; ; tick++) {
+            System.Threading.Thread.Sleep(100);
+            if (tick % 10 == 0 && parent != null) {
+                try { if (parent.HasExited) return 0; } catch { return 0; }
+            }
+            IntPtr window = GetForegroundWindow();
+            if (window == IntPtr.Zero) continue;
+            uint pid;
+            uint thread = GetWindowThreadProcessId(window, out pid);
+            bool isTerminal;
+            if (!terminal.TryGetValue(pid, out isTerminal)) {
+                try { isTerminal = System.Diagnostics.Process.GetProcessById((int)pid).ProcessName == "WindowsTerminal"; } catch { isTerminal = false; }
+                terminal[pid] = isTerminal;
+            }
+            if (!isTerminal) continue;
+            IntPtr layout = GetKeyboardLayout(thread);
+            if (seen && layout != last) {
+                Console.Out.WriteLine("layout " + layout.ToInt64().ToString("X"));
+                Console.Out.Flush();
+            }
+            last = layout;
+            seen = true;
+        }
+    }
+
     static int Main(string[] args) {
         if (args.Length == 0) return 2;
+        if (args[0] == "--watch") return Watch();
         uint pid = ATTACH_PARENT_PROCESS;
         int first = 0;
         if (args[0].StartsWith("--pid=")) { pid = uint.Parse(args[0].Substring(6)); first = 1; }

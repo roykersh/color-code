@@ -73,6 +73,10 @@ let watch: { cancel: () => void } | undefined
 let seenStamp: string | undefined
 let transcriptPath: string | undefined
 let sessionCwd: string | undefined
+// A /clear just ended the conversation: the next session.start, under a new
+// session id, carries this tab's color over instead of looking it up.
+let cleared = false
+let rememberedId: string | undefined
 const palettes = new Map<string, TerminalPalette>()
 
 const variant = (): Variant => (mode !== 'auto' ? mode : /light/i.test(ownTheme ?? '') ? 'light' : 'dark')
@@ -85,12 +89,18 @@ const themeFile = (name: string | undefined) => (name === undefined ? undefined 
 
 let logged = ''
 
-// Set COLOR_CODE_DEBUG=1 to write what each step did to debug.log.
+// Set COLOR_CODE_DEBUG=1 to write what each step did to debug-<pid>.log, one
+// file per Claude Code process: each rewrites its whole file, so a shared one
+// kept only the busiest session's lines. Kept to the last 500 lines.
+let logFile: string | undefined
 async function log($: EngineInterface, line: string) {
   try {
     if (!(await $.env.get('COLOR_CODE_DEBUG'))) return
+    logFile ??= `${$.plugin.root}/debug-${(await $.env.get('CLAUDE_CODE_PID').catch(() => undefined)) ?? (await $.session.id()).slice(0, 8)}.log`
     logged += `${new Date().toISOString()} ${line}\n`
-    await $.fs.write(`${$.plugin.root}/debug.log`, logged)
+    const lines = logged.split('\n')
+    if (lines.length > 501) logged = lines.slice(-501).join('\n')
+    await $.fs.write(logFile, logged)
   } catch {
     // logging never breaks anything
   }
@@ -151,16 +161,19 @@ async function batch($: EngineInterface, reset: boolean): Promise<string[]> {
 // Sends the batch when it changed, or when healing (a moved tab or a settings
 // reload drops OSC colors; the same colors again repaint nothing visible).
 // Sends never overlap; requests made meanwhile fold into one more.
+// `force`: a heal that goes out even within a second of the last send (Windows
+// Terminal just dropped the colors, and a second of black shows).
+type PaintOpts = { heal?: boolean; reset?: boolean; force?: boolean }
 let inflight: Promise<void> | undefined
-let again: { heal: boolean; reset: boolean } | undefined
+let again: PaintOpts | undefined
 
-function paint($: EngineInterface, opts: { heal?: boolean; reset?: boolean } = {}): Promise<void> {
+function paint($: EngineInterface, opts: PaintOpts = {}): Promise<void> {
   if (inflight) {
-    again = { heal: Boolean(again?.heal || opts.heal), reset: Boolean(again?.reset || opts.reset) }
+    again = { heal: Boolean(again?.heal || opts.heal), reset: Boolean(again?.reset || opts.reset), force: Boolean(again?.force || opts.force) }
     return inflight
   }
   inflight = (async () => {
-    let next: { heal?: boolean; reset?: boolean } | undefined = opts
+    let next: PaintOpts | undefined = opts
     while (next) {
       again = undefined
       try {
@@ -176,7 +189,7 @@ function paint($: EngineInterface, opts: { heal?: boolean; reset?: boolean } = {
   return inflight
 }
 
-async function paintOnce($: EngineInterface, opts: { heal?: boolean; reset?: boolean }) {
+async function paintOnce($: EngineInterface, opts: PaintOpts) {
   // A background session paints nothing (Claude Code keeps its own tab writes
   // out of one too): its colors would reach the tab of the client attached to
   // it, where that client's Color Code paints its own state, and the two
@@ -187,7 +200,7 @@ async function paintOnce($: EngineInterface, opts: { heal?: boolean; reset?: boo
   const now = await $.clock.now()
   // A change always goes out; a heal re-sends the same only for a colored
   // tab, and not twice within a second.
-  if (key === lastBatch && !(opts.heal && shown() !== undefined && now - lastSentAt >= 1000)) return
+  if (key === lastBatch && !(opts.heal && shown() !== undefined && (opts.force || now - lastSentAt >= 1000))) return
   lastBatch = key
   lastSentAt = now
   painted = bodies.some(b => b.startsWith('11;'))
@@ -209,6 +222,7 @@ function keepHealing($: EngineInterface) {
       heal = undefined
     }
     void watchSettings($)
+    void watchLayout($)
   } else if (shown() === undefined && heal !== undefined) {
     stopHealing()
   }
@@ -219,6 +233,40 @@ function stopHealing() {
   heal = undefined
   watch?.cancel()
   watch = undefined
+  void layoutWatch?.return?.(undefined as never)?.catch?.(() => undefined)
+  layoutWatch = undefined
+}
+
+// Windows Terminal also drops every tab's colors when the input language
+// changes (Alt+Shift), a few hundred ms after, with no file to watch: osc.exe
+// --watch prints a line each time the layout of the terminal in front
+// changes, and the tab is repainted over the drop. The child ends with the
+// loop, the module or Claude Code.
+const LAYOUT_REPAINT_MS = [200, 300, 380, 460, 600, 900, 1300]
+let layoutWatch: ReturnType<EngineInterface['process']['spawn']> | undefined
+
+async function watchLayout($: EngineInterface) {
+  if (layoutWatch !== undefined || !(await platform($)).windows || !(await $.env.get('WT_SESSION'))) return
+  let stream: ReturnType<EngineInterface['process']['spawn']>
+  try {
+    stream = $.process.spawn({ argv: [`${$.plugin.root}/bin/osc.exe`, '--watch'] })
+  } catch (err) {
+    await log($, `layout watch: ${String(err)}`)
+    return
+  }
+  layoutWatch = stream
+  void (async () => {
+    try {
+      for await (const piece of stream) {
+        if (piece.stream !== 'stdout' || !piece.text.includes('layout')) continue
+        await log($, `input language changed (${piece.text.trim()}): repainting`)
+        for (const ms of LAYOUT_REPAINT_MS) later($, () => paint($, { heal: true, force: true }), ms)
+      }
+    } catch (err) {
+      await log($, `layout watch: ${String(err)}`)
+    }
+    if (layoutWatch === stream) layoutWatch = undefined
+  })()
 }
 
 // A write to Windows Terminal's settings.json reloads them and clears this
@@ -245,6 +293,7 @@ async function watchSettings($: EngineInterface) {
 // Kept for this session: a module reload reads the env, a resume the store.
 async function remember($: EngineInterface) {
   const id = await $.session.id()
+  rememberedId = id
   await $.env.set('COLOR_CODE_STATE', `${id} ${color ?? '-'} ${dynamic ? 'dynamic' : 'static'}`).catch(() => undefined)
   try {
     const all = ((await $.store.get('sessions')) ?? {}) as Record<string, Remembered>
@@ -283,10 +332,11 @@ function stateChanged($: EngineInterface) {
 // after its last turn ends, so callers look again a little later too.
 async function countAgents($: EngineInterface) {
   const agents = await $.agent.list().catch(() => [])
-  const n = agents.filter(a => (a.status === 'running' || a.status === 'pending') && !a.teammateId).length
+  const live = agents.filter(a => (a.status === 'running' || a.status === 'pending') && !a.teammateId)
+  const n = live.length
   if (n === background) return
   background = n
-  await log($, `subagents running: ${n}`)
+  await log($, `subagents running: ${n} ${JSON.stringify(live.map(a => ({ type: a.type, d: a.description, s: a.status, by: a.spawnedBy, p: a.parentId, name: a.name })))}`)
   stateChanged($)
 }
 
@@ -352,16 +402,30 @@ async function readName($: EngineInterface): Promise<string | undefined> {
     const found = await $.process
       .run(
         p.windows
-          ? ['findstr', '/R', '/C:^{.type.:.ai-title', '/C:^{.type.:.custom-title', file]
+          ? ['findstr', '/R', '/C:^{.type.:.ai-title', '/C:^{.type.:.custom-title', winPath(file)]
           : ['grep', '-E', '^\\{"type":"(ai|custom)-title"', file],
         { timeoutMs: 5000 },
       )
       .catch(() => undefined)
-    const rows = found?.stdout ?? ''
-    return lastField(rows, 'custom-title', 'customTitle') ?? lastField(rows, 'ai-title', 'aiTitle')
-  } catch {
+    let rows = found?.stdout ?? ''
+    // No search tool, or it failed (findstr also answers 1 for a file it can't
+    // open, with a word on stderr): read the transcript itself.
+    if (found === undefined || found.exitCode > 1 || (found.exitCode === 1 && found.stderr.trim())) rows = await $.fs.read(file).catch(() => '')
+    const name = lastField(rows, 'custom-title', 'customTitle') ?? lastField(rows, 'ai-title', 'aiTitle')
+    if (name !== sessionName || name === undefined) await log($,`name ${name ?? '(none)'} from ${file} (search ${found ? `exit ${found.exitCode}` : 'failed'})`)
+    return name
+  } catch (err) {
+    await log($, `name: ${String(err)}`)
     return undefined
   }
+}
+
+// A name Claude Code hands over itself (the classic hooks' session_title, a
+// /rename's argument): it shows at once, without waiting for the transcript.
+function named($: EngineInterface, title: unknown) {
+  if (typeof title !== 'string' || !title.trim() || title.trim() === sessionName) return
+  sessionName = title.trim()
+  retitleSoon($)
 }
 
 async function retitle($: EngineInterface) {
@@ -400,6 +464,11 @@ async function startTitles($: EngineInterface) {
 
 // ---- where the color comes from -------------------------------------------
 
+// findstr reads every argument that starts with "/" as a switch, a path's
+// "/.claude/..." included: it then can't open the file and answers 1, as for
+// no match. Backslashes only.
+export const winPath = (path: string) => path.replace(/\//g, '\\')
+
 async function transcriptFile($: EngineInterface, cwd: string): Promise<string | undefined> {
   if (transcriptPath && (await $.fs.exists(transcriptPath).catch(() => false))) return transcriptPath
   const home = await claudeHome($)
@@ -422,10 +491,10 @@ async function savedColor($: EngineInterface, cwd: string): Promise<string | und
     if (!file) return undefined
     const p = await platform($)
     const found = await $.process
-      .run(p.windows ? ['findstr', '/R', '/B', '/C:{.type.:.agent-color.', file] : ['grep', '^{"type":"agent-color"', file])
+      .run(p.windows ? ['findstr', '/R', '/B', '/C:{.type.:.agent-color.', winPath(file)] : ['grep', '^{"type":"agent-color"', file])
       .catch(() => undefined)
     let lines = found?.stdout
-    if (lines === undefined || found?.exitCode === 2) lines = await $.fs.read(file).catch(() => '')
+    if (lines === undefined || found === undefined || found.exitCode > 1 || (found.exitCode === 1 && found.stderr.trim())) lines = await $.fs.read(file).catch(() => '')
     const last = lines.split(/\r?\n/).filter(l => l.includes('"agent-color"')).at(-1)
     if (!last) return undefined
     const named = /"agentColor"\s*:\s*"(\w+)"/.exec(last)?.[1]
@@ -577,16 +646,20 @@ export const register: Register = (on, options) => {
       // transcript (a resume), then auto.
       const [keptId, kept = '-', how = ''] = ((await $.env.get('COLOR_CODE_STATE')) ?? '').split(' ')
       const reloaded = keptId === id
+      // After a /clear this module goes on under a new id: the tab keeps its color.
+      const carried = cleared && !reloaded
+      cleared = false
       const sessions = ((await $.store.get('sessions').catch(() => undefined)) ?? {}) as Record<string, Remembered>
       // COLOR_CODE_START=dynamic: a launcher asks for a session that starts dynamic.
       const startDynamic = (await $.env.get('COLOR_CODE_START'))?.toLowerCase() === 'dynamic'
-      const wasDynamic = reloaded ? how === 'dynamic' : startDynamic || sessions[id]?.dynamic === true
+      const wasDynamic = reloaded ? how === 'dynamic' : carried ? dynamic : startDynamic || sessions[id]?.dynamic === true
       const pick =
         (reloaded && COLORS.includes(kept) ? kept : undefined) ??
+        (carried ? color : undefined) ??
         (await savedColor($, e.cwd)) ??
         (autoColor && !wasDynamic ? projectColor(await $.session.root().catch(() => e.cwd)) : undefined)
-      if (pick !== undefined || wasDynamic) await apply($, pick, 'session start', { dynamic: wasDynamic })
-      if (wasDynamic && !reloaded) $.ui.log(LEGEND_LINE)
+      if (pick !== undefined || wasDynamic) await apply($, pick, carried ? 'a /clear' : 'session start', { dynamic: wasDynamic })
+      if (wasDynamic && !reloaded && !carried) $.ui.log(LEGEND_LINE)
       later($, () => offerTabs($), 2500)
     } catch (err) {
       await log($, `session.start: ${String(err)}`)
@@ -597,7 +670,28 @@ export const register: Register = (on, options) => {
   // The transcript's own path, from the classic event that carries it.
   on('classic.SessionStart', async ($, e, next) => {
     if (typeof e.transcript_path === 'string') transcriptPath = e.transcript_path
+    named($, e.session_title)
     return next(e)
+  }).catch(($, e, next) => next(e))
+
+  // Every prompt carries the session's current title, a /rename included.
+  on('classic.UserPromptSubmit', async ($, e, next) => {
+    named($, e.session_title)
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  // /rename <name> shows at once; a bare /rename (Claude picks the name) as
+  // soon as it lands in the transcript.
+  on('command.run', { command: 'rename' }, async ($, e, next) => {
+    const ran = await next(e)
+    if (e.args.trim()) named($, e.args)
+    else
+      for (const ms of [500, 3000])
+        later($, async () => {
+          const name = await readName($)
+          if (name !== undefined) named($, name)
+        }, ms)
+    return ran
   }).catch(($, e, next) => next(e))
 
   // /color's typeahead line and hint list what Color Code adds.
@@ -717,6 +811,12 @@ export const register: Register = (on, options) => {
       turning = true
       waiting.length = 0
       later($, () => paint($, { heal: true }))
+      // The session id moved under a colored tab (a /clear that raised no
+      // session.start): remember the color under the new id too, so a reload finds it.
+      if (dynamic || color !== undefined)
+        later($, async () => {
+          if ((await $.session.id()) !== rememberedId) await remember($)
+        })
       retitleSoon($)
     } else agentsSoon($)
     return next(e)
@@ -794,6 +894,7 @@ export const register: Register = (on, options) => {
       shells = 0
       // A /clear starts a conversation with no name yet; the title follows it.
       if (e.reason === 'clear') {
+        cleared = true
         sessionName = undefined
         transcriptPath = undefined
         retitleSoon($)

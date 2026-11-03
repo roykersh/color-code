@@ -67,9 +67,11 @@ session stays dynamic.
 - **Per tab.** The colors go to that tab only. Exit Claude and the tab resets.
 - **Resume keeps it.** `claude --resume` / `claude -c` brings the session's
   color (or dynamic mode) back.
-- **Self-healing.** Drag a tab to another window or let Windows Terminal reload
-  its settings and the colors come back: at once when the move changes the
-  tab's width, otherwise within 3 seconds.
+- **Self-healing.** Drag a tab to another window, let Windows Terminal reload
+  its settings, or switch the input language (Alt+Shift), and the colors come
+  back: a language switch or a settings write is caught at once (a blink of
+  the default background), a moved tab at once when its width changes,
+  anything else within 3 seconds.
 - **Auto color per project** (off by default): turn on `autoColor` in `/config`
   and a session nobody colored gets a stable color picked from its project
   folder, so the same repo always opens in the same color.
@@ -144,8 +146,11 @@ before 0.5.0, run `/color-code setup` once to update the theme.
   Color Code leans on as little as it can, and every part fails soft.
 - Windows Terminal keeps no per-tab color of its own that a program can set,
   so a tab's colors live in the terminal session itself and are lost when the
-  tab moves to another window or the settings reload. Color Code repaints them
-  (above); a moved tab can show its default colors for a moment.
+  tab moves to another window, the settings reload or the input language
+  changes. Nothing inside the tab can stop that; Color Code repaints them
+  (above), so a tab can show its default colors for a moment. `bin/osc.exe
+  --watch`, one small process per colored session, watches the keyboard layout
+  of the Windows Terminal window in front for this and ends with its session.
 - A background session (`/bg`) has no tab of its own, so Color Code paints
   nothing from it: a tab attached to one keeps the colors of the session
   running in that tab.
@@ -163,7 +168,8 @@ that ships with Windows under `C:\Windows\Microsoft.NET\Framework64\v4.0.30319`)
 Set `COLOR_CODE_START=dynamic` in the environment Claude Code starts in to
 have the session start in `/color dynamic` (handy in a launcher script).
 
-Set `COLOR_CODE_DEBUG=1` to have the plugin log each step to `debug.log`.
+Set `COLOR_CODE_DEBUG=1` to have the plugin log each step to a
+`debug-<session>.log` of its own per session.
 
 ## Roadmap
 

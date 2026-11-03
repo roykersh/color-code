@@ -280,15 +280,18 @@ test('an artifact comment watch or an MCP monitor (Stop calls both "monitor") ne
 const MARK = '\u2733'
 const titles = (runs: string[][]) => runs.filter(argv => argv[0]?.endsWith('/bin/osc.exe') && argv[1]?.startsWith('0;')).map(argv => argv[1])
 
-function titleEngine(on: On, runs: string[][], env: Record<string, string>, rows: { value: string }, answer: { text: string }) {
+function titleEngine(on: On, runs: string[][], env: Record<string, string>, rows: { value: string }, answer: { text: string }, session = { id: 's1', kept: [] as string[] }) {
   const clock = mock.clock(on)
   mock.store(on)
   mock.env(on, { OS: 'Windows_NT', USERPROFILE: 'C:/Users/me', WT_SESSION: 'x', ...env })
   on('fs.read', () => ({ value: JSON.stringify(THEME) }))
   on('fs.write', () => ({ value: undefined }))
   on('fs.exists', () => ({ value: true }))
-  on('env.set', () => ({ value: {} }))
-  on('session.id', () => ({ value: 's1' }))
+  on('env.set', ($, e) => {
+    session.kept.push(String(e.value))
+    return { value: {} }
+  })
+  on('session.id', () => ({ value: session.id }))
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('session.root', () => ({ value: 'C:/proj' }))
   on('settings.read', () => ({ value: {} }))
@@ -313,6 +316,10 @@ test('with Claude Code\'s title off, the tab reads "✳ name" once a turn is don
   const clock = titleEngine(on, runs, { CLAUDE_CODE_DISABLE_TERMINAL_TITLE: '1' }, rows, answer)
   await $.session.start({ cwd: 'C:/proj', surface: null, isInteractive: true })
   expect(titles(runs).at(-1)).toBe(`0;${MARK} Fix the bar`)
+  // findstr takes "/..." for a switch: the transcript's path goes with backslashes.
+  const path = runs.find(argv => argv[0] === 'findstr')?.at(-1) ?? ''
+  expect(path).toContain('\\.claude\\projects\\')
+  expect(path).not.toContain('/')
   await $.turn.start({ text: 'go', turnId: 't1' })
   await clock.advance(10)
   expect(titles(runs).at(-1)).toBe('0;Fix the bar')
@@ -348,6 +355,35 @@ test("without CLAUDE_CODE_DISABLE_TERMINAL_TITLE the title stays Claude Code's",
   await $.turn.complete({ answer: 'Done.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
   await clock.advance(10_000)
   expect(titles(runs)).toHaveLength(0)
+})
+
+test('the title Claude Code hands a prompt or a /rename shows at once, with nothing in the transcript yet', async ($, on) => {
+  const runs: string[][] = []
+  const clock = titleEngine(on, runs, { CLAUDE_CODE_DISABLE_TERMINAL_TITLE: '1' }, { value: '' }, { text: 'Done.' })
+  on('classic.UserPromptSubmit', () => ({}))
+  await $.session.start({ cwd: 'C:/proj', surface: null, isInteractive: true })
+  expect(titles(runs).at(-1)).toBe(`0;${MARK} Claude Code`)
+  await $.classic.UserPromptSubmit({ prompt: 'go', session_title: 'color code' })
+  await clock.advance(10)
+  expect(titles(runs).at(-1)).toBe(`0;${MARK} color code`)
+  await $.command.run({ command: 'rename', args: 'tab names' })
+  await clock.advance(10)
+  expect(titles(runs).at(-1)).toBe(`0;${MARK} tab names`)
+})
+
+test('a /clear keeps the tab dynamic under the new session id, so a reload finds it', async ($, on) => {
+  const runs: string[][] = []
+  const session = { id: 's1', kept: [] as string[] }
+  const clock = titleEngine(on, runs, {}, { value: '' }, { text: 'Done.' }, session)
+  on('session.end', ($, e) => ({ sessionId: e.sessionId }))
+  await $.session.start({ cwd: 'C:/proj', surface: null, isInteractive: true })
+  await $.command.run(color('dynamic'))
+  expect(session.kept.at(-1)).toBe('s1 - dynamic')
+  await $.session.end({ reason: 'clear', sessionId: 's1', resume: { id: 's1' } })
+  session.id = 's2'
+  await $.session.start({ cwd: 'C:/proj', surface: null, isInteractive: true })
+  await clock.advance(10)
+  expect(session.kept.at(-1)).toBe('s2 - dynamic')
 })
 
 test('a background session (/bg) never writes the title', async ($, on) => {
