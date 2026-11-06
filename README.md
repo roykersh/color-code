@@ -183,6 +183,42 @@ Ideas, roughly in order:
 - High-contrast and colorblind-safe sets.
 - VS Code and JetBrains terminals (they ignore most OSC color sequences today).
 
+## What it touches
+
+- **Terminal output**: OSC color sequences (colors, palette, their resets; the
+  tab title only with `CLAUDE_CODE_DISABLE_TERMINAL_TITLE`, the progress ring
+  only with `activity`) to its own session's tab, reset when the session exits.
+- **Processes**: on Windows, `bin/osc.exe` (source `tools/osc.cs`) for each
+  paint, since a plugin's child can't write to Claude Code's console itself. In
+  Windows Terminal, one `osc.exe --watch` per colored session: every 100 ms it
+  reads the keyboard layout id (never keystrokes) of the Windows Terminal window
+  in front, prints a line when it changes (Alt+Shift) so the tab is repainted,
+  and exits with Claude Code. On macOS/Linux, `/bin/sh` writing to the session's
+  tty, and in tmux `tmux set -p allow-passthrough on` for its own pane only.
+  `findstr` / `grep` to search the transcript.
+- **Files written**: Windows Terminal's `settings.json`, only after you say yes
+  or run `/color-code setup`: a "Color Code" theme, made active, with a one-time
+  backup `settings.json.color-code.bak` beside it. `/color-code undo-setup`
+  removes the theme and restores the previous one. The plugin's own store (a
+  JSON file in your Claude Code config folder): the light/dark/auto mode, which
+  sessions are dynamic, the setup answer. A `debug-<id>.log` in the plugin
+  folder only with `COLOR_CODE_DEBUG=1`. No temp files.
+- **Environment**: sets `COLOR_CODE_STATE` (session id, color, dynamic or not)
+  in Claude Code's own process, so a reload of the plugin keeps the tab's color.
+  No Claude Code setting is changed.
+- **Read**: the session transcript (the session name for the tab title, and the
+  last `/color` to restore it on resume), your Claude `theme` setting, the
+  running subagents list, Windows Terminal's settings files (their timestamp,
+  to repaint after a reload) and a few environment variables.
+- **Hooks**: session, prompt, turn, tool-call, Stop, elicitation, `/color`,
+  `/rename` and theme events, and two UI renders. It answers `/color`'s own
+  words (`dynamic`, `light`, ...) itself. The `PermissionRequest` hook only
+  observes: it passes the event on, returns the decision unchanged and turns
+  the tab blue while one is pending. It never approves or denies anything.
+- **Network**: none.
+- **Claude desktop app**: Color Code stands aside there (every hook passes the
+  event straight on, no commands are added). It works in the CLI only.
+
 ## License
 
 MIT
