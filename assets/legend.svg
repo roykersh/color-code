@@ -13,8 +13,8 @@
 <rect x="28" y="226" width="64" height="84" rx="10" fill="#a581e4"/>
 <text x="112" y="250" font-family="'Segoe UI', -apple-system, Helvetica, Arial, sans-serif" font-size="26" font-weight="700" fill="#a581e4">purple</text>
 <text x="372" y="250" font-family="'Segoe UI', -apple-system, Helvetica, Arial, sans-serif" font-size="20" font-weight="700" fill="#f2f2f2" text-anchor="end">subagent</text>
-<text x="112" y="280" font-family="'Segoe UI', -apple-system, Helvetica, Arial, sans-serif" font-size="16" fill="#9a9a9a">the turn is over but a subagent</text>
-<text x="112" y="302" font-family="'Segoe UI', -apple-system, Helvetica, Arial, sans-serif" font-size="16" fill="#9a9a9a">still runs: you can type</text>
+<text x="112" y="280" font-family="'Segoe UI', -apple-system, Helvetica, Arial, sans-serif" font-size="16" fill="#9a9a9a">the turn is over, a subagent or</text>
+<text x="112" y="302" font-family="'Segoe UI', -apple-system, Helvetica, Arial, sans-serif" font-size="16" fill="#9a9a9a">background task runs: you can type</text>
 <line x1="28" y1="332" x2="372" y2="332" stroke="#2c2c2c" stroke-width="2"/>
 <rect x="28" y="354" width="64" height="84" rx="10" fill="#5592e7"/>
 <text x="112" y="378" font-family="'Segoe UI', -apple-system, Helvetica, Arial, sans-serif" font-size="26" font-weight="700" fill="#5592e7">blue</text>

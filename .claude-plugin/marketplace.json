@@ -1,6 +1,6 @@
 {
   "name": "color-code",
-  "description": "Color Code: per-session /color themes for Claude Code and the terminal tab",
+  "description": "Color Code: /color colors the whole terminal tab per Claude Code session",
   "owner": {
     "name": "Roy Kershberg"
   },
@@ -8,7 +8,7 @@
     {
       "name": "color-code",
       "source": "./",
-      "description": "Per-session themes for /color in Claude Code and the terminal tab"
+      "description": "/color colors the whole terminal tab per Claude Code session (background, palette, Windows Terminal tab and title bar), or with /color dynamic follows Claude's state: yellow working, purple a subagent or background task still running, blue needs you, green done, red failed. Windows Terminal, macOS and Linux."
     }
   ]
 }

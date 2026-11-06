@@ -35,7 +35,7 @@ type State = keyof typeof STATES
 // notice ($.ui.log draws one line).
 const LEGEND_ROWS: { state: State; means: string; when: string }[] = [
   { state: 'working', means: 'working', when: 'Claude is on your prompt' },
-  { state: 'background', means: 'background', when: 'the turn is over but a subagent or a background shell still runs: you can type' },
+  { state: 'background', means: 'background', when: 'the turn is over but a subagent or a background task still runs: you can type' },
   { state: 'needsYou', means: 'needs you', when: 'a permission prompt or a question is waiting on you' },
   { state: 'done', means: 'done', when: 'the turn finished: your move' },
   { state: 'failed', means: 'failed', when: 'an error, or you interrupted it' },
@@ -575,7 +575,7 @@ function usage(): string {
   return [
     `/color ${HINT}`,
     `  ${COLORS.join(', ')}: color this session's tab.`,
-    "  dynamic: the color follows Claude's state (yellow working, purple a subagent or background shell still runs, blue needs you, green done, red failed); static ends it.",
+    "  dynamic: the color follows Claude's state (yellow working, purple a subagent or background task still runs, blue needs you, green done, red failed); static ends it.",
     '  light, dark, auto: the pale or the dark variant of each color, or follow your Claude theme.',
     '  default: back to the terminal\'s own colors.',
   ].join('\n')
