@@ -1,3 +1,5 @@
+<img src=".claude-plugin/icon.png" alt="Color Code icon" width="96">
+
 # Color Code
 
 Make `/color` in Claude Code color the **whole terminal tab**, not just the prompt bar.
@@ -41,11 +43,11 @@ Exactly when each color shows:
 
 | Color | Means | When |
 | --- | --- | --- |
-| 🟨 **yellow** | working | from the moment you send a prompt until the turn ends |
-| 🟪 **purple** | background | the turn is over but a subagent or a background shell (`run_in_background`, Monitor) it started still runs; you can type, and its result comes in when it finishes |
-| 🟦 **blue** | needs you | a permission prompt or a question (AskUserQuestion, an MCP form) is waiting on you, or the turn ended by asking you something |
-| 🟩 **green** | done | the turn finished; your move whenever you like |
-| 🟥 **red** | failed | the turn ended in an error, a refusal, or you interrupted it |
+| 🟨&nbsp;**yellow** | Claude working | from your prompt until the turn ends |
+| 🟪&nbsp;**purple** | subagent working | the turn ended, a subagent or background task still runs |
+| 🟦&nbsp;**blue** | needs you | a permission prompt or a question is waiting for you |
+| 🟩&nbsp;**green** | done | the turn finished |
+| 🟥&nbsp;**red** | failed | an error, a refusal, or you interrupted the turn |
 
 The same legend is printed in the session when you turn it on, a line per
 color in the colors themselves, and again when a dynamic session is resumed.
