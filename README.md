@@ -1,6 +1,4 @@
-<img src=".claude-plugin/icon.png" alt="Color Code icon" width="96">
-
-# Color Code
+# <img src=".claude-plugin/icon.png" alt="" width="40" align="absmiddle"> Color Code
 
 Make `/color` in Claude Code color the **whole terminal tab**, not just the prompt bar.
 
@@ -172,18 +170,6 @@ have the session start in `/color dynamic` (handy in a launcher script).
 
 Set `COLOR_CODE_DEBUG=1` to have the plugin log each step to a
 `debug-<session>.log` of its own per session.
-
-## Roadmap
-
-Ideas, roughly in order:
-
-- Claude's own UI colors following `/color`, as soon as Claude Code lets a
-  plugin switch the theme of a running session.
-- Per-project color file: a `.claude/color` a team commits so a repo opens in
-  its color for everyone.
-- Dynamic palettes of your own (pick the five state colors).
-- High-contrast and colorblind-safe sets.
-- VS Code and JetBrains terminals (they ignore most OSC color sequences today).
 
 ## What it touches
 
