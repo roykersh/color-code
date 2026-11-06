@@ -43,6 +43,14 @@ test('/color red paints the tab through osc.exe on Windows', async ($, on) => {
   expect(osc?.some(b => b.startsWith('9;4'))).toBe(false)
 })
 
+test('in the Claude desktop app /color goes to the built-in and nothing is painted', async ($, on) => {
+  const runs: string[][] = []
+  engine(on, runs)
+  mock.env(on, { OS: 'Windows_NT', WT_SESSION: 'x', USERPROFILE: 'C:/Users/me', CLAUDE_CODE_ENTRYPOINT: 'claude-desktop' })
+  await $.command.run(color('red'))
+  expect(runs.some(argv => argv[0]?.endsWith('/bin/osc.exe'))).toBe(false)
+})
+
 test('the ring is drawn only when the activity option is on', { options: { activity: true } }, async ($, on) => {
   const runs: string[][] = []
   engine(on, runs)

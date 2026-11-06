@@ -623,11 +623,24 @@ async function colorCode($: EngineInterface, args: string): Promise<string> {
 
 // ---- hooks ------------------------------------------------------------------
 
+// The Claude desktop app's sessions draw in no terminal tab of their own, so
+// there Color Code stands aside: every hook hands the event straight on, and
+// /color, /color-code and the band are not added.
+// (Each hook checks for itself: the engine takes on(...) only as written.)
+let desktop: Promise<boolean> | undefined
+const inDesktop = ($: EngineInterface) =>
+  (desktop ??= $.env
+    .get('CLAUDE_CODE_ENTRYPOINT')
+    .then(v => v === 'claude-desktop')
+    .catch(() => false))
+
 export const register: Register = (on, options) => {
+  desktop = undefined
   showActivity = options.activity === true
   const autoColor = options.autoColor === true
 
   on('session.start', async ($, e, next) => {
+    if (await inDesktop($)) return next(e)
     await $.command
       .register({ name: 'color-code', description: 'Color Code: status, light/dark/auto, dynamic, Windows Terminal setup', argumentHint: '[light|dark|auto|dynamic|static|setup|undo-setup]' })
       .catch(() => undefined)
@@ -669,6 +682,7 @@ export const register: Register = (on, options) => {
 
   // The transcript's own path, from the classic event that carries it.
   on('classic.SessionStart', async ($, e, next) => {
+    if (await inDesktop($)) return next(e)
     if (typeof e.transcript_path === 'string') transcriptPath = e.transcript_path
     named($, e.session_title)
     return next(e)
@@ -676,6 +690,7 @@ export const register: Register = (on, options) => {
 
   // Every prompt carries the session's current title, a /rename included.
   on('classic.UserPromptSubmit', async ($, e, next) => {
+    if (await inDesktop($)) return next(e)
     named($, e.session_title)
     return next(e)
   }).catch(($, e, next) => next(e))
@@ -683,6 +698,7 @@ export const register: Register = (on, options) => {
   // /rename <name> shows at once; a bare /rename (Claude picks the name) as
   // soon as it lands in the transcript.
   on('command.run', { command: 'rename' }, async ($, e, next) => {
+    if (await inDesktop($)) return next(e)
     const ran = await next(e)
     if (e.args.trim()) named($, e.args)
     else
@@ -696,12 +712,14 @@ export const register: Register = (on, options) => {
 
   // /color's typeahead line and hint list what Color Code adds.
   on('command.describe', { command: 'color' }, async ($, e, next) => {
+    if (await inDesktop($)) return next(e)
     const described = await next(e)
     return { ...described, description: DESCRIPTION, argumentHint: HINT }
   }).catch(($, e, next) => next(e))
 
   // And the words themselves, once a letter is typed after /color.
   on('prompt.autocomplete', async ($, e, next) => {
+    if (await inDesktop($)) return next(e)
     const offered = await next(e)
     if (!/^\/color\s+\S*$/i.test(e.text.slice(0, e.cursor)) || e.token.startsWith('/')) return offered
     const typed = e.token.toLowerCase()
@@ -718,6 +736,7 @@ export const register: Register = (on, options) => {
   }).catch(($, e, next) => next(e))
 
   on('command.run', { command: 'color' }, async ($, e, next) => {
+    if (await inDesktop($)) return next(e)
     const arg = e.args.trim().toLowerCase()
     // Color Code's own words, and anything /color would refuse, are answered
     // here without the built-in, which knows none of them.
@@ -750,6 +769,7 @@ export const register: Register = (on, options) => {
 
   // The legend in color: a swatch of each state's own tab color, a line each.
   on('ui.render', { component: 'CommandOutput' }, async ($, e, next) => {
+    if (await inDesktop($)) return next(e)
     // Core shows a plugin's answer under its name ("color-code: ..."), so match the end.
     if (typeof e.props.text !== 'string' || !e.props.text.endsWith(LEGEND)) return next(e)
     const { Box, Text } = $.ui.resolve(e)
@@ -780,6 +800,7 @@ export const register: Register = (on, options) => {
 
   // A theme picked in /config or /theme: the variant follows it in auto mode.
   on('config.set', { key: 'theme' }, async ($, e, next) => {
+    if (await inDesktop($)) return next(e)
     const set = await next(e)
     if ('value' in set && typeof set.value === 'string') {
       const before = variant()
@@ -791,6 +812,7 @@ export const register: Register = (on, options) => {
 
   // A tab dragged to another window usually changes its width: repaint at once.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (await inDesktop($)) return next(e)
     const width = e.viewport?.columns ?? 0
     if (width !== lastWidth) {
       if (lastWidth !== 0) later($, () => paint($, { heal: true }))
@@ -802,11 +824,13 @@ export const register: Register = (on, options) => {
   // ---- Claude's state: dynamic colors, the optional ring, healing ----
 
   on('prompt.submit', async ($, e, next) => {
+    if (await inDesktop($)) return next(e)
     later($, () => paint($, { heal: true }))
     return next(e)
   }).catch(($, e, next) => next(e))
 
   on('turn.start', async ($, e, next) => {
+    if (await inDesktop($)) return next(e)
     if (e.agentId === undefined) {
       turning = true
       waiting.length = 0
@@ -823,6 +847,7 @@ export const register: Register = (on, options) => {
   })
 
   on('turn.complete', async ($, e, next) => {
+    if (await inDesktop($)) return next(e)
     const done = await next(e)
     if (e.agentId === undefined) {
       turning = false
@@ -841,12 +866,14 @@ export const register: Register = (on, options) => {
   // that finishes later wakes a turn of its own (its notification), whose Stop
   // counts again.
   on('classic.Stop', async ($, e, next) => {
+    if (await inDesktop($)) return next(e)
     if (Array.isArray(e.background_tasks)) countShells($, e.background_tasks)
     return next(e)
   }).catch(($, e, next) => next(e))
 
   // A permission prompt is up.
   on('classic.PermissionRequest', async ($, e, next) => {
+    if (await inDesktop($)) return next(e)
     const decided = await next(e)
     if (!('decision' in decided) || decided.decision === undefined) {
       waiting.push(String(e.tool_name))
@@ -856,12 +883,14 @@ export const register: Register = (on, options) => {
   }).catch(($, e, next) => next(e))
 
   on('classic.Elicitation', async ($, e, next) => {
+    if (await inDesktop($)) return next(e)
     waiting.push('elicitation')
     stateChanged($)
     return next(e)
   }).catch(($, e, next) => next(e))
 
   on('classic.ElicitationResult', async ($, e, next) => {
+    if (await inDesktop($)) return next(e)
     const at = waiting.indexOf('elicitation')
     if (at >= 0) waiting.splice(at, 1)
     stateChanged($)
@@ -870,6 +899,7 @@ export const register: Register = (on, options) => {
 
   // A question for you, and the end of any call that waited on you.
   on('tool.call', async ($, e, next) => {
+    if (await inDesktop($)) return next(e)
     const tool = String(e.tool)
     if (tool === 'AskUserQuestion') {
       waiting.push(tool)
@@ -887,6 +917,7 @@ export const register: Register = (on, options) => {
   }).catch(($, e, next) => next(e))
 
   on('session.end', async ($, e, next) => {
+    if (await inDesktop($)) return next(e)
     try {
       turning = false
       waiting.length = 0
